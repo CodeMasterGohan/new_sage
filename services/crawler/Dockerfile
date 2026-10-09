@@ -23,9 +23,9 @@ COPY services/ingestion /app/services/ingestion
 
 ENV REDIS_URL="" \
     DATABASE_URL="" \
-    MINIO_ENDPOINT="" \
-    MINIO_ACCESS_KEY="" \
-    MINIO_SECRET_KEY="" \
-    MINIO_BUCKET="sage-snapshots"
+    RUSTFS_ENDPOINT="" \
+    RUSTFS_ACCESS_KEY="" \
+    RUSTFS_SECRET_KEY="" \
+    RUSTFS_BUCKET="sage-snapshots"
 
 CMD ["python", "-m", "services.crawler.worker"]

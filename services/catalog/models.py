@@ -12,7 +12,7 @@ Table map (spec §4):
   to new_DRUID's ``document_version``. Re-crawls create new rows; old rows
   stay for reproducibility until explicitly pruned (§12).
 * ``page`` — one crawled/cloned docs page; ``raw_snapshot_key`` points at
-  the raw snapshot in MinIO, ``content_hash`` enables cross-version dedup
+  the raw snapshot in RustFS, ``content_hash`` enables cross-version dedup
   (§6: unchanged pages are aliased, not re-chunked).
 * ``chunk`` — one §7 heading chunk; ``headings`` is the section breadcrumb
   rendered in provenance (§15). Vectors live in Milvus, keyed by chunk id.
@@ -208,7 +208,7 @@ class LibraryVersion(Base):
 class Page(Base):
     """One crawled/cloned documentation page (spec §4).
 
-    ``raw_snapshot_key`` is the MinIO object key of the raw snapshot
+    ``raw_snapshot_key`` is the RustFS object key of the raw snapshot
     (§5.3); ``content_hash`` lets a re-crawl alias unchanged pages instead
     of re-chunking them (§6 dedup).
     """

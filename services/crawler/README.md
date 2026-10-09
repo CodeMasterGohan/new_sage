@@ -3,7 +3,7 @@
 On-demand versioned-docs crawler (spec §5.2, §6, §9.3.1, §12). When
 `get-library-docs` hits an unknown or stale (library, version), a crawl
 job is enqueued instead of failing; the job fetches the docs politely,
-snapshots raw HTML to MinIO, and feeds the ingestion pipeline, which
+snapshots raw HTML to RustFS, and feeds the ingestion pipeline, which
 marks the catalog version ready.
 
 ## Layout
@@ -13,7 +13,7 @@ marks the catalog version ready.
 | `polite_fetch.py` | `PoliteFetcher.fetch(url) -> (html, final_url)`: robots.txt obeyed (fail closed on disallow), 1 req/s per host (in-memory timestamps, thread-safe), exponential backoff on 429/5xx (max 4 retries, honors `Retry-After`), User-Agent `NewSageBot/1.0 (+personal research crawler; contact: local)`. HTTP layer (`http_get`) and clock (`sleep`/`monotonic`) injectable |
 | `version_detect.py` | Strategies tried in order by `detect(library_record)`: `sphinx_versions_json` (version→URL map), `docusaurus_versions` (versions.json, then version-dropdown scrape), `latest_redirect` (`/latest/` → final URL), `git_tags` (`git ls-remote --tags`, no clone). Each returns `None` when not applicable; network/git runners injectable |
 | `repo_clone.py` | `clone_at_tag(repo_url, tag, dest)` → commit SHA (`git clone --branch <tag> --depth 1` via subprocess, no GitPython; tags validated against option/path injection); `find_doc_files(checkout)` → README.md + `docs/**/*.md` + CHANGELOG.md (case-insensitive, dot-dirs skipped, sorted); `pages_from_clone` hands the list to `services.ingestion.importers.import_markdown_files`, matching its `Page` shape exactly |
-| `snapshots.py` | `SnapshotStore` ABC; `MinioSnapshotStore` (real, `minio` package) and `InMemorySnapshotStore` (test fake). `put_html(key, html)` → key for `page.raw_snapshot_key`. Secrets from `MINIO_*` env only — never in code |
+| `snapshots.py` | `SnapshotStore` ABC; `RustFSSnapshotStore` (real, `minio` package against RustFS's S3-compatible endpoint) and `InMemorySnapshotStore` (test fake). `put_html(key, html)` → key for `page.raw_snapshot_key`. Secrets from `RUSTFS_*` env only — never in code |
 | `stale.py` | `needs_refresh(row)`: `crawled_at + refresh_after_days < now`, ready-only, naive-datetime-safe — the same predicate as `CatalogRepository.list_stale_versions`, so the two can never disagree |
 | `jobs.py` | RQ job functions (see below), the sitemap/page-list discovery, and `RepoCatalogWriter` (adapts the ingestion pipeline's `CatalogWriter` protocol onto the real `CatalogRepository`: page rows with `raw_snapshot_key`, chunk rows routed by content-hash, `mark_version_ready`) |
 | `worker.py` | RQ worker consuming the `sage-crawl` queue (`REDIS_URL`) |
@@ -32,14 +32,16 @@ enqueue_crawl(library_id, version)   # -> RQ job id on the sage-crawl queue
   (`source="repoclone"`), commit SHA returned in the job report.
   Otherwise web crawl (§5.2): version detection → sitemap (one-level
   index recursion, §6 scope filter: same origin + base path prefix,
-  5000-URL safety cap) → polite fetch → MinIO snapshot → HTML→Markdown
+  5000-URL safety cap) → polite fetch → RustFS snapshot → HTML→Markdown
   → `pipeline.ingest_pages(source="crawl")` → catalog marked ready.
   Cross-version dedup (§6) passes the current latest ready version as
   `prev_version`. Failures mark the version row `failed` and the
   `crawl_job` row `failed` with the error.
 - **`refresh_stale()`** — §12 sweep: `list_stale_versions()` →
-  one RQ crawl per stale version. Runs on the compose scheduler
-  (weekly per §17.6).
+  one RQ crawl per stale version. Runs on the **`scheduler` compose
+  service** (`services/scheduler/`, weekly by default via
+  `REFRESH_INTERVAL_SECONDS`), which calls this exact entry point
+  in-process — the same function an RQ worker would run.
 - **`devdocs_sync(manifest=None)`** — §5.1.1 monthly sync. The **diff**
   (`devdocs_diff`, pure logic, no docker) compares a provided
   `{docset: version}` manifest against catalog READY rows and re-ingests
@@ -58,17 +60,17 @@ exercise the real `CatalogRepository` (SQLite) with fakes everywhere else.
 |---|---|---|
 | `REDIS_URL` | yes | RQ transport (`sage-crawl` queue) |
 | `DATABASE_URL` | yes | catalog Postgres (`postgresql+psycopg://…`) |
-| `MINIO_ENDPOINT` | yes | snapshot store |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | for real MinIO | snapshot store auth |
-| `MINIO_BUCKET` | no (default `sage-snapshots`) | snapshot bucket |
-| `MINIO_SECURE` | no (default `false`) | TLS to MinIO |
+| `RUSTFS_ENDPOINT` | yes | snapshot store |
+| `RUSTFS_ACCESS_KEY` / `RUSTFS_SECRET_KEY` | for real RustFS | snapshot store auth |
+| `RUSTFS_BUCKET` | no (default `sage-snapshots`) | snapshot bucket |
+| `RUSTFS_SECURE` | no (default `false`) | TLS to RustFS |
 
 ## Run
 
 ```bash
 # worker
 REDIS_URL=redis://redis:6379/0 DATABASE_URL=postgresql+psycopg://sage:sage@postgres:5432/sage \
-  MINIO_ENDPOINT=minio:9000 python -m services.crawler.worker
+  RUSTFS_ENDPOINT=rustfs:9000 python -m services.crawler.worker
 
 # tests (from ~/workspace/new_sage/build; fully offline)
 ./services/crawler/.venv/bin/python -m pytest services/crawler/tests -q
@@ -94,7 +96,7 @@ ingestion image); `git` is installed in the image for repo-clone pinning.
    ingestion service's `enqueue_ingest`), to avoid a circular import:
    `refresh_stale` needs it and `worker.py` imports from `jobs.py`.
 4. **Repo-clone snapshots record the commit SHA in the job report** rather
-   than a MinIO tarball of the checkout (spec §9.3.1 allows "just record
+   than a RustFS tarball of the checkout (spec §9.3.1 allows "just record
    the commit SHA; the clone is reproducible from the tag"). A tarball
    snapshot is listed under Gaps.
 5. **Version lifecycle statuses** walk `crawling`/`cloning` → `parsing` →
@@ -112,4 +114,4 @@ ingestion image); `git` is installed in the image for repo-clone pinning.
   migration; flagged, not silently dropped).
 - No per-library crawl concurrency cap beyond the per-host 1 req/s
   throttle; a very large sitemap (5000 URLs) is one long sequential job.
-- MinIO tarball snapshots of repo checkouts (see deviation 4).
+- RustFS tarball snapshots of repo checkouts (see deviation 4).

@@ -32,7 +32,7 @@ page               id UUID PK
                    url TEXT
                    title TEXT
                    section_path TEXT
-                   raw_snapshot_key TEXT                 -- MinIO key (§5.3)
+                   raw_snapshot_key TEXT                 -- RustFS key (§5.3)
                    content_hash TEXT                      -- cross-version dedup (§6)
 
 chunk              id UUID PK

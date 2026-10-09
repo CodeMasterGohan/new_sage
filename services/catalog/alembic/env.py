@@ -26,7 +26,7 @@ def get_url() -> str:
     if not url:
         raise RuntimeError(
             "DATABASE_URL is not set; refusing to guess. "
-            "Example: postgresql+psycopg://sage:sage@localhost:5432/sage"
+            "Example: postgresql+psycopg://sage:sage@localhost:5433/sage"
         )
     return url
 

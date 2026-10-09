@@ -11,14 +11,14 @@ RQ entry points (importable by dotted path; all arguments picklable):
   diffs a provided ``{docset: version}`` manifest against the catalog.
 
 Each entry point builds its real dependencies (catalog session from
-``DATABASE_URL``, ``PoliteFetcher``, ``MinioSnapshotStore``, the
+``DATABASE_URL``, ``PoliteFetcher``, ``RustFSSnapshotStore``, the
 ingestion pipeline) and delegates to a ``*_impl`` core with injectable
 seams, so tests run fully offline.
 
 Crawl flow (web)::
 
     detect version -> sitemap/page list -> polite_fetch each ->
-    MinIO snapshot -> HTML->MD -> pipeline.ingest_pages(source="crawl") ->
+    RustFS snapshot -> HTML->MD -> pipeline.ingest_pages(source="crawl") ->
     catalog mark ready
 
 Crawl flow (repo)::
@@ -42,7 +42,7 @@ from urllib.parse import urlsplit
 
 from .polite_fetch import PoliteFetcher
 from .repo_clone import CloneError, clone_at_tag, find_doc_files, pages_from_clone
-from .snapshots import MinioSnapshotStore, snapshot_key
+from .snapshots import RustFSSnapshotStore, snapshot_key
 from .stale import needs_refresh  # noqa: F401  (re-exported policy helper)
 from .version_detect import DetectionResult, detect, git_tags
 
@@ -517,7 +517,7 @@ def _crawl_repo(repo, lib, version_row, version, *, run_git, ingest,
         )
     writer = RepoCatalogWriter(repo, version_row.id, make_latest=make_latest)
     # Spec §9.3.1: the clone is reproducible from the tag; the commit SHA
-    # is the snapshot. (A MinIO tarball of the checkout is future work —
+    # is the snapshot. (A RustFS tarball of the checkout is future work —
     # see README gaps.)
     # NOTE: library_id here is the canonical slug (Library.name), matching
     # the retrieval predicate and the ingestion CatalogWriter contract —
@@ -619,7 +619,7 @@ def crawl_library_version(
             version,
             repo=repo,
             fetcher=PoliteFetcher(),
-            snapshots=MinioSnapshotStore(),
+            snapshots=RustFSSnapshotStore(),
             ingest=_real_ingest,
             make_latest=make_latest,
             vector_store=_real_vector_store(),
