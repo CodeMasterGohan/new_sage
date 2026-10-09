@@ -1,0 +1,7 @@
+# new_sage eval service (P4) — spec §16
+
+No third-party dependencies beyond what the sibling services already need:
+the harness imports `mcp_server` (pydantic), `ingestion` (stdlib only) and
+`retrieval` (stdlib only) in-process. Tests need pytest:
+
+pytest==9.1.1
