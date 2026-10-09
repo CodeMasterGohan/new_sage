@@ -1,0 +1,14 @@
+# Pinned 2026-10-08. Python 3.11+.
+# mcp = MCP Python SDK (includes FastMCP). Pins below are the versions the
+# MCP server implementation was built and contract-tested against.
+mcp==1.12.0
+uvicorn==0.34.3
+pydantic==2.11.7
+httpx==0.28.1
+# LibraryResolver.from_catalog() path (DB-backed resolver): needs services/catalog
+# copied into the image (see Dockerfile) and these catalog-matching pins.
+sqlalchemy==2.0.38
+psycopg[binary]==3.2.9
+# test-only
+pytest==8.3.5
+pytest-asyncio==0.26.0
