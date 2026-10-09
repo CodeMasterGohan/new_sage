@@ -11,7 +11,7 @@ Usage::
     python -m create_collection --recreate --yes  # DROP and rebuild (data loss!)
 
 Environment:
-    MILVUS_URI (default http://localhost:19530),
+    MILVUS_URI (default http://localhost:19531),
     MILVUS_COLLECTION (default sage_chunks),
     MILVUS_WAIT_TIMEOUT_S (default 300)
 """
@@ -50,7 +50,7 @@ class SchemaMismatchError(SetupError):
 
 @dataclass
 class Settings:
-    uri: str = "http://localhost:19530"
+    uri: str = "http://localhost:19531"
     collection: str = COLLECTION_NAME
     wait_timeout_s: float = 300.0
 
@@ -59,7 +59,7 @@ class Settings:
         import os
 
         return cls(
-            uri=os.environ.get("MILVUS_URI", "http://localhost:19530"),
+            uri=os.environ.get("MILVUS_URI", "http://localhost:19531"),
             collection=os.environ.get("MILVUS_COLLECTION", COLLECTION_NAME),
             wait_timeout_s=float(os.environ.get("MILVUS_WAIT_TIMEOUT_S", "300")),
         )

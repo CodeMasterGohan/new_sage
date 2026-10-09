@@ -17,13 +17,13 @@ def test_parse_overrides():
     args = parse_args(
         [
             "--retrieval-url",
-            "http://localhost:8001",
+            "http://localhost:8011",
             "--resolver-table",
             "/tmp/custom.json",
             "--dev-fake-clients",
         ]
     )
-    assert args.retrieval_url == "http://localhost:8001"
+    assert args.retrieval_url == "http://localhost:8011"
     assert args.resolver_table == "/tmp/custom.json"
     assert args.dev_fake_clients is True
 

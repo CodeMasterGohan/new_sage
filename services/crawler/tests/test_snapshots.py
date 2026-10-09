@@ -1,10 +1,10 @@
-"""Tests for snapshots (in-memory fake + minio with a fake client)."""
+"""Tests for snapshots (in-memory fake + RustFS store with a fake client)."""
 
 import pytest
 
 from services.crawler.snapshots import (
     InMemorySnapshotStore,
-    MinioSnapshotStore,
+    RustFSSnapshotStore,
     snapshot_key,
 )
 
@@ -31,7 +31,7 @@ def test_inmemory_roundtrip():
         store.get_html("missing")
 
 
-class FakeMinioClient:
+class FakeRustFSClient:
     def __init__(self):
         self.buckets: set[str] = set()
         self.objects: dict[tuple[str, str], bytes] = {}
@@ -65,9 +65,9 @@ class FakeMinioClient:
         return Resp()
 
 
-def test_minio_store_put_and_get_with_fake_client():
-    client = FakeMinioClient()
-    store = MinioSnapshotStore(bucket="test-snaps", client=client)
+def test_rustfs_store_put_and_get_with_fake_client():
+    client = FakeRustFSClient()
+    store = RustFSSnapshotStore(bucket="test-snaps", client=client)
     key = store.put_html("snapshots/l/1/a.html", "<html>hi</html>")
     assert key == "snapshots/l/1/a.html"
     assert "test-snaps" in client.buckets  # bucket auto-created
@@ -75,6 +75,6 @@ def test_minio_store_put_and_get_with_fake_client():
     assert store.get_html(key) == "<html>hi</html>"
 
 
-def test_minio_store_requires_endpoint_without_client():
-    with pytest.raises(RuntimeError, match="MINIO_ENDPOINT"):
-        MinioSnapshotStore(endpoint="", client=None)
+def test_rustfs_store_requires_endpoint_without_client():
+    with pytest.raises(RuntimeError, match="RUSTFS_ENDPOINT"):
+        RustFSSnapshotStore(endpoint="", client=None)

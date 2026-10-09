@@ -26,7 +26,7 @@ vendored file's sha256 against accidental edits.
 
 ## Endpoints (exact HTTP contract)
 
-Base URL: `http://localhost:8002`.
+Base URL: `http://localhost:8012`.
 
 ### `POST /embed`
 
@@ -113,7 +113,7 @@ package. Build context is `build/`.
 Run:
 ```bash
 docker build -f services/embedding/Dockerfile -t new-sage-embedding .
-docker run --rm -p 8002:8002 \
+docker run --rm -p 8012:8002 \
   -e EMBEDDING_BACKEND=st \
   -e MODEL_PATH=/models/embeddinggemma-2 \
   -v /path/to/model-registry/embeddinggemma-2:/models/embeddinggemma-2:ro \

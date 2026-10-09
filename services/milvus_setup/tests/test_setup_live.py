@@ -1,7 +1,7 @@
 """Live Milvus provisioning tests.
 
 Requires a reachable Milvus: set ``MILVUS_URI`` (e.g.
-``http://localhost:19530``). Skipped in CI and in offline runs — the unit
+``http://localhost:19531``). Skipped in CI and in offline runs — the unit
 tests (test_schema.py, test_deletion.py) need no live server.
 
 These tests create and DROP a scratch collection

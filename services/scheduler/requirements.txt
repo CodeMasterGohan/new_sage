@@ -1,0 +1,9 @@
+# New_sage scheduler service — Python 3.11+
+#
+# The scheduler itself is stdlib-only. The Docker image installs the
+# crawler's dependency closure because refresh_stale() is called
+# in-process via services.crawler.jobs (catalog access + RQ enqueue).
+# Pins are identical to services/crawler/requirements.txt.
+#
+# test-only
+pytest==9.1.1

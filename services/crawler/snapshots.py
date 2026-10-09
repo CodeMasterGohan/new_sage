@@ -1,4 +1,4 @@
-"""MinIO snapshot writer (spec §5.3, §11).
+"""RustFS snapshot writer (spec §5.3, §11).
 
 Raw HTML snapshots are the rebuild source if Milvus ever needs
 reconstructing; the catalog ``page.raw_snapshot_key`` points at these
@@ -6,10 +6,11 @@ objects. Keys look like::
 
     snapshots/<library>/<version>/<slug>.html
 
-``SnapshotStore`` is abstract; ``MinioSnapshotStore`` is the real one
-(``minio`` package, pinned), ``InMemorySnapshotStore`` is the test fake.
+``SnapshotStore`` is abstract; ``RustFSSnapshotStore`` is the real one
+(``minio`` Python package, used unmodified against RustFS's S3-compatible
+endpoint), ``InMemorySnapshotStore`` is the test fake.
 
-Secrets never live in code: endpoint/keys come from ``MINIO_*``
+Secrets never live in code: endpoint/keys come from ``RUSTFS_*``
 environment variables (see README).
 """
 
@@ -49,8 +50,8 @@ def snapshot_key(library: str, version: str, url: str) -> str:
     return f"snapshots/{safe_lib}/{safe_ver}/{slug}-{digest}.html"
 
 
-class MinioSnapshotStore(SnapshotStore):
-    """Real snapshot store backed by MinIO (S3-compatible)."""
+class RustFSSnapshotStore(SnapshotStore):
+    """Real snapshot store backed by RustFS (S3-compatible)."""
 
     def __init__(
         self,
@@ -62,18 +63,18 @@ class MinioSnapshotStore(SnapshotStore):
         secure: bool | None = None,
         client=None,
     ) -> None:
-        self.endpoint = endpoint or os.environ.get("MINIO_ENDPOINT", "")
-        self.access_key = access_key or os.environ.get("MINIO_ACCESS_KEY", "")
-        self.secret_key = secret_key or os.environ.get("MINIO_SECRET_KEY", "")
-        self.bucket = bucket or os.environ.get("MINIO_BUCKET", BUCKET)
+        self.endpoint = endpoint or os.environ.get("RUSTFS_ENDPOINT", "")
+        self.access_key = access_key or os.environ.get("RUSTFS_ACCESS_KEY", "")
+        self.secret_key = secret_key or os.environ.get("RUSTFS_SECRET_KEY", "")
+        self.bucket = bucket or os.environ.get("RUSTFS_BUCKET", BUCKET)
         if secure is None:
-            secure = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+            secure = os.environ.get("RUSTFS_SECURE", "false").lower() == "true"
         self.secure = secure
         self._client = client
         if self._client is None:
             if not self.endpoint:
                 raise RuntimeError(
-                    "MINIO_ENDPOINT is not set: refusing to guess the "
+                    "RUSTFS_ENDPOINT is not set: refusing to guess the "
                     "snapshot store."
                 )
             try:

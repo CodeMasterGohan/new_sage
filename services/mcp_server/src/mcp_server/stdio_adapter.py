@@ -10,7 +10,7 @@ The stdio adapter and the HTTP service must never share a process.
 
 Usage:
     python -m mcp_server.stdio_adapter \\
-        --retrieval-url http://localhost:8001 \\
+         --retrieval-url http://localhost:8011 \\
         --resolver-table /path/to/libraries_seed.json
 """
 

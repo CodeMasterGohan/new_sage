@@ -75,7 +75,7 @@ uvicorn --factory mcp_server.server:create_app --host 0.0.0.0 --port 8000
 stdio:
 
 ```bash
-python -m mcp_server.stdio_adapter --retrieval-url http://localhost:8001
+python -m mcp_server.stdio_adapter --retrieval-url http://localhost:8011
 # dev: --dev-fake-clients
 ```
 
