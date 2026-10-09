@@ -19,8 +19,9 @@ boundary. Do not expose these ports to the public internet.
 | `redis` | 6379 | — (internal-only) | crawl queue + hot-response cache (spec §11) |
 | `etcd` | — | — | internal only; required by milvus-standalone |
 
-One network (`sage-net`), named volumes: `pgdata`, `redisdata`,
-`rustfsdata`, `etcddata`, `milvusdata`, `model-artifacts`.
+One network (`sage-net`); persistent data in host bind mounts under
+`/DATA/docker/mounts/<service>` (postgres, redis, rustfs, etcd, milvus,
+model-artifacts) — no named volumes.
 
 Milvus (`milvusdb/milvus:latest`, CPU) requires the `etcd` sidecar — embedded
 etcd was removed in Milvus 2.6.x, so etcd runs as a compose service even
@@ -40,32 +41,44 @@ Milvus on first start under the root credentials).
 ## Staging model artifacts
 
 Services are offline-first (spec §14): they load pre-staged artifacts from
-the `model-artifacts` volume and fail startup rather than downloading at
-runtime (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1` are set in the stack).
+the host bind mount `/DATA/docker/mounts/model-artifacts` (mounted
+read-only at `/artifacts` in the embedding/retrieval/ingestion containers)
+and fail startup rather than downloading at runtime (`HF_HUB_OFFLINE=1`,
+`TRANSFORMERS_OFFLINE=1` are set in the stack).
 
-Stage once before first boot:
+Stage once before first boot — just copy the checkpoints into the host
+directory:
 
 ```bash
-# create the volume
-docker volume create new_sage_model-artifacts   # actual name: <project>_model-artifacts; check `docker volume ls`
-
-# copy the models in (volume mount path is /artifacts inside containers)
-docker run --rm \
-  -v <volume-name>:/artifacts \
-  -v /path/to/your/models:/src:ro \
-  alpine sh -c 'mkdir -p /artifacts/embeddinggemma-2 /artifacts/minilm && cp -r /src/embeddinggemma-2/* /artifacts/embeddinggemma-2/ && cp -r /src/minilm/* /artifacts/minilm/'
+sudo mkdir -p /DATA/docker/mounts/model-artifacts/{embeddinggemma-2,minilm}
+sudo cp -r /path/to/your/models/embeddinggemma-2/* /DATA/docker/mounts/model-artifacts/embeddinggemma-2/
+sudo cp -r /path/to/your/models/minilm/*           /DATA/docker/mounts/model-artifacts/minilm/
 ```
 
-Expected layout in the volume:
+Expected layout on the host:
 
 ```
-/artifacts/
+/DATA/docker/mounts/model-artifacts/
   embeddinggemma-2/   # google/embeddinggemma-2 checkpoint, offline loadable
   minilm/             # MiniLM reranker checkpoint + tokenizer
 ```
 
 `MODEL_PATH`, `MINILM_MODEL_PATH`, `MINILM_TOKENIZER_PATH` in `.env` point at
-these paths (defaults shown above).
+the in-container paths (`/artifacts/...`, defaults shown above).
+
+## Host bind-mount directories
+
+All persistent data lives in bind mounts under `/DATA/docker/mounts/<service>`
+— no named volumes. Docker creates a missing bind-mount directory as **root**,
+so pre-create them and fix ownership for the images that don't run as root:
+
+```bash
+sudo mkdir -p /DATA/docker/mounts/{postgres,redis,rustfs,etcd,milvus,model-artifacts}
+sudo chown 70:70       /DATA/docker/mounts/postgres   # postgres:16-alpine runs as UID 70
+sudo chown 999:999     /DATA/docker/mounts/redis      # redis:7-alpine runs as UID 999
+sudo chown 10001:10001 /DATA/docker/mounts/rustfs     # rustfs runs as UID 10001
+# etcd and milvus run as root — no chown needed.
+```
 
 ## First-run order
 

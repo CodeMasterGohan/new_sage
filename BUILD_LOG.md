@@ -532,3 +532,10 @@ Full new_sage tree: 461 passed, 2 skipped, 0 failed.
   architecture diagram (cora, single host port 8010), quickstart, MCP tool
   table, config highlights, repo layout, offline-first, test counts
   (461 passed / 2 skipped), docs + skill links, H200-remaining status.
+
+## 2026-10-09 — Bind-mount volumes under /DATA/docker/mounts
+- All named volumes replaced with host bind mounts:
+  `/DATA/docker/mounts/{postgres,redis,rustfs,etcd,milvus,model-artifacts}`.
+  Top-level `volumes:` block removed. deploy/README.md rewritten staging
+  section (plain `cp` into the host dir — no more `docker volume create`)
+  plus host-directory prep with ownership notes.

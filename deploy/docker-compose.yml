@@ -31,7 +31,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sage}
       POSTGRES_DB: ${POSTGRES_DB:-sage}
     volumes:
-    - pgdata:/var/lib/postgresql/data
+    - /DATA/docker/mounts/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sage} -d ${POSTGRES_DB:-sage}"]
       interval: 5s
@@ -46,7 +46,7 @@ services:
     image: redis:7.4.2-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-    - redisdata:/data
+    - /DATA/docker/mounts/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -67,7 +67,7 @@ services:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
-    - rustfsdata:/data
+    - /DATA/docker/mounts/rustfs:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 10s
@@ -88,7 +88,7 @@ services:
       ETCD_QUOTA_BACKEND_BYTES: "4294967296"
       ETCD_SNAPSHOT_COUNT: "50000"
     volumes:
-    - etcddata:/etcd
+    - /DATA/docker/mounts/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
@@ -113,7 +113,7 @@ services:
       MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
       MINIO_USE_SSL: "false"
     volumes:
-    - milvusdata:/var/lib/milvus
+    - /DATA/docker/mounts/milvus:/var/lib/milvus
     depends_on:
       etcd:
         condition: service_healthy
@@ -177,7 +177,7 @@ services:
     volumes:
       # Staged model artifacts, READ-ONLY. Missing models fail startup
       # (offline-first, spec §14) — see deploy/README.md for staging.
-    - model-artifacts:/artifacts:ro
+    - /DATA/docker/mounts/model-artifacts:/artifacts:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8002'"]
       interval: 10s
@@ -202,7 +202,7 @@ services:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     volumes:
-    - model-artifacts:/artifacts:ro
+    - /DATA/docker/mounts/model-artifacts:/artifacts:ro
     depends_on:
       milvus-standalone:
         condition: service_healthy
@@ -269,7 +269,7 @@ services:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
-    - model-artifacts:/artifacts:ro
+    - /DATA/docker/mounts/model-artifacts:/artifacts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -376,13 +376,6 @@ services:
     networks:
     - default
     - cora
-volumes:
-  pgdata:
-  redisdata:
-  rustfsdata:
-  etcddata:
-  milvusdata:
-  model-artifacts:
 
 networks:
   cora:
