@@ -483,3 +483,16 @@ verification on James's box at first `docker compose up`.
   (`sage-overview.md`, `sage-architecture.md`, `sage-ingestion-freshness.md`,
   `sage-deployment.md`, `sage-configuration.md`). Site rebuilt: link check
   378/378 pass. Repo copy `build/docs-site/` re-synced.
+
+## 2026-10-09 — All containers joined to pre-existing `cora` network (James)
+
+All 13 services in `deploy/docker-compose.yml` now also attach to the
+pre-existing external `cora` network on James's server. Project networking
+unchanged (`default` kept alongside `cora`), so intra-project DNS is unaffected.
+
+## 2026-10-09 — Host-port minimization (James)
+
+Removed host-port publishing from all services except `mcp-server` (8010, for
+James's client-side AI CLI). Retrieval, embedding, rustfs, milvus, postgres,
+redis are now internal-only. Dead `*_HOST_PORT` vars removed from
+`deploy/.env.example` (kept `MCP_HOST_PORT`).

@@ -7,16 +7,16 @@ boundary. Do not expose these ports to the public internet.
 
 ## Service map
 
-| Service | Container port | Default host port | What it is |
+| Service | Container port | Host port | What it is |
 |---|---|---|---|
-| `mcp-server` | 8000 | `${MCP_HOST_PORT:-8010}` | FastMCP: `resolve-library-id`, `get-library-docs` (spec §10) |
-| `retrieval` | 8001 | `${RETRIEVAL_HOST_PORT:-8011}` | RRF hybrid (dense+BM25+identifier) + MiniLM rerank (spec §9) |
-| `embedding` | 8002 | `${EMBEDDING_HOST_PORT:-8012}` | EmbeddingGemma 2, CPU-served, 768-dim (spec §8) |
+| `mcp-server` | 8000 | `${MCP_HOST_PORT:-8010}` | FastMCP: `resolve-library-id`, `get-library-docs` (spec §10); the only published port (AI CLI) |
+| `retrieval` | 8001 | — (internal-only) | RRF hybrid (dense+BM25+identifier) + MiniLM rerank (spec §9) |
+| `embedding` | 8002 | — (internal-only) | EmbeddingGemma 2, CPU-served, 768-dim (spec §8) |
 | `ingestion-worker` | — | — | RQ worker: crawl → trafilatura → chunk → embed → index (spec §5) |
-| `milvus-standalone` | 19530 / 9091 | `${MILVUS_HOST_PORT:-19531}` / `${MILVUS_MGMT_HOST_PORT:-9092}` | `sage_chunks` collection (spec §9.1) |
-| `rustfs` | 9000 / 9001 | `${RUSTFS_HOST_PORT:-9010}` / `${RUSTFS_CONSOLE_HOST_PORT:-9011}` | raw snapshots + seed checkouts (spec §11) |
-| `postgres` | 5432 | `${POSTGRES_HOST_PORT:-5433}` | catalog: libraries, versions, pages, jobs (spec §11) |
-| `redis` | 6379 | `${REDIS_HOST_PORT:-6380}` | crawl queue + hot-response cache (spec §11) |
+| `milvus-standalone` | 19530 / 9091 | — (internal-only) | `sage_chunks` collection (spec §9.1) |
+| `rustfs` | 9000 / 9001 | — (internal-only) | raw snapshots + seed checkouts (spec §11) |
+| `postgres` | 5432 | — (internal-only) | catalog: libraries, versions, pages, jobs (spec §11) |
+| `redis` | 6379 | — (internal-only) | crawl queue + hot-response cache (spec §11) |
 | `etcd` | — | — | internal only; required by milvus-standalone |
 
 One network (`sage-net`), named volumes: `pgdata`, `redisdata`,

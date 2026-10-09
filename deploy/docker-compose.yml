@@ -31,9 +31,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sage}
       POSTGRES_DB: ${POSTGRES_DB:-sage}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sage} -d ${POSTGRES_DB:-sage}"]
       interval: 5s
@@ -41,13 +39,14 @@ services:
       retries: 10
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   redis:
     image: redis:7.4.2-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
-      - redisdata:/data
-    ports:
-      - "${REDIS_HOST_PORT:-6380}:6379"
+    - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -58,6 +57,9 @@ services:
   # RustFS replaces MinIO (MinIO community edition was archived in 2026;
   # its Docker Hub repos were deleted). S3-compatible object store; the
   # image runs as non-root UID 10001 by default.
+    networks:
+    - default
+    - cora
   rustfs:
     image: rustfs/rustfs:1.0.1
     command: ["--console-address", ":9001"]
@@ -65,10 +67,7 @@ services:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
-      - rustfsdata:/data
-    ports:
-      - "${RUSTFS_HOST_PORT:-9010}:9000"
-      - "${RUSTFS_CONSOLE_HOST_PORT:-9011}:9001"
+    - rustfsdata:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 10s
@@ -77,6 +76,9 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   etcd:
     # REQUIRED by milvus-standalone (see header note). Internal only.
     image: quay.io/coreos/etcd:v3.5.16
@@ -86,7 +88,7 @@ services:
       ETCD_QUOTA_BACKEND_BYTES: "4294967296"
       ETCD_SNAPSHOT_COUNT: "50000"
     volumes:
-      - etcddata:/etcd
+    - etcddata:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     healthcheck:
       test: ["CMD", "etcdctl", "endpoint", "health"]
@@ -95,6 +97,9 @@ services:
       retries: 5
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   milvus-standalone:
     image: milvusdb/milvus:latest  # CPU-only, latest stable
     command: ["milvus", "run", "standalone"]
@@ -108,10 +113,7 @@ services:
       MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
       MINIO_USE_SSL: "false"
     volumes:
-      - milvusdata:/var/lib/milvus
-    ports:
-      - "${MILVUS_HOST_PORT:-19531}:19530"
-      - "${MILVUS_MGMT_HOST_PORT:-9092}:9091"
+    - milvusdata:/var/lib/milvus
     depends_on:
       etcd:
         condition: service_healthy
@@ -126,6 +128,9 @@ services:
     restart: unless-stopped
 
   # ── one-shot jobs ──────────────────────────────────────────────
+    networks:
+    - default
+    - cora
   catalog-migrate:
     # Runs the catalog's Alembic migrations, then exits (the catalog
     # README documents this as part of the stack). Retrieval and the
@@ -140,6 +145,9 @@ services:
         condition: service_healthy
     # Run on first boot and after --recreate: docker compose run --rm catalog-migrate
 
+    networks:
+    - default
+    - cora
   milvus_setup:
     build:
       context: ..
@@ -155,6 +163,9 @@ services:
     # Run on first boot and after --recreate: docker compose run --rm milvus_setup
 
   # ── long-running CPU services ──────────────────────────────────
+    networks:
+    - default
+    - cora
   embedding:
     build:
       context: ..
@@ -166,9 +177,7 @@ services:
     volumes:
       # Staged model artifacts, READ-ONLY. Missing models fail startup
       # (offline-first, spec §14) — see deploy/README.md for staging.
-      - model-artifacts:/artifacts:ro
-    ports:
-      - "${EMBEDDING_HOST_PORT:-8012}:8002"
+    - model-artifacts:/artifacts:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8002'"]
       interval: 10s
@@ -177,6 +186,9 @@ services:
       start_period: 120s
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   retrieval:
     build:
       context: ..
@@ -190,9 +202,7 @@ services:
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
     volumes:
-      - model-artifacts:/artifacts:ro
-    ports:
-      - "${RETRIEVAL_HOST_PORT:-8011}:8001"
+    - model-artifacts:/artifacts:ro
     depends_on:
       milvus-standalone:
         condition: service_healthy
@@ -210,6 +220,9 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   mcp-server:
     build:
       context: ..
@@ -222,7 +235,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "${MCP_HOST_PORT:-8010}:8000"
+    - "${MCP_HOST_PORT:-8010}:8000"
     depends_on:
       retrieval:
         condition: service_healthy
@@ -238,6 +251,9 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   ingestion-worker:
     # RQ worker: no published ports. The ingestion agent owns this service's
     # Dockerfile and worker entrypoint; this is the compose wiring.
@@ -253,7 +269,7 @@ services:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
-      - model-artifacts:/artifacts:ro
+    - model-artifacts:/artifacts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -268,6 +284,9 @@ services:
     restart: unless-stopped
     # Scale CPU workers: docker compose up -d --scale ingestion-worker=4
 
+    networks:
+    - default
+    - cora
   crawler-worker:
     # RQ worker: consumes the sage-crawl queue (spec §5.2, §9.3.1, §12).
     # Added in P5 hardening: the crawler Dockerfile and the sage-crawl queue
@@ -295,6 +314,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
   scheduler:
     # Weekly refresh_stale sweep (§12 stale-while-revalidate, §17.6).
     # Runs services.crawler.jobs.refresh_stale() in-process once per
@@ -323,6 +345,9 @@ services:
         condition: service_started
     restart: unless-stopped
 
+    networks:
+    - default
+    - cora
 volumes:
   pgdata:
   redisdata:
@@ -332,5 +357,8 @@ volumes:
   model-artifacts:
 
 networks:
+  cora:
+    name: cora
+    external: true
   sage-net:
     name: sage-net
