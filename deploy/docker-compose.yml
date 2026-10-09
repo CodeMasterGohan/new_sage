@@ -348,6 +348,34 @@ services:
     networks:
     - default
     - cora
+  devdocs-scheduler:
+    # Monthly DevDocs image sync (§5.1.1, §17.6): the same scheduler image,
+    # but SCHEDULER_JOB=devdocs_sync and a 30-day interval. Once per
+    # interval it enqueues ONE devdocs_sync RQ job on the sage-crawl queue
+    # (services.crawler.jobs.enqueue_devdocs_sync); the crawler-worker runs
+    # the pull + diff + ingest. This service never touches docker or the
+    # image itself, so it needs only REDIS_URL — no DATABASE_URL.
+    # Manual trigger: docker compose run --rm devdocs-scheduler python -m scheduler.run --once --job devdocs_sync
+    build:
+      context: ..
+      dockerfile: services/scheduler/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SCHEDULER_JOB: devdocs_sync
+      REFRESH_INTERVAL_SECONDS: ${DEVDOCS_SYNC_INTERVAL_SECONDS:-2592000}
+      SCHEDULER_STARTUP_JITTER_SECONDS: ${SCHEDULER_STARTUP_JITTER_SECONDS:-600}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+      crawler-worker:
+        condition: service_started
+    restart: unless-stopped
+
+    networks:
+    - default
+    - cora
 volumes:
   pgdata:
   redisdata:

@@ -496,3 +496,39 @@ Removed host-port publishing from all services except `mcp-server` (8010, for
 James's client-side AI CLI). Retrieval, embedding, rustfs, milvus, postgres,
 redis are now internal-only. Dead `*_HOST_PORT` vars removed from
 `deploy/.env.example` (kept `MCP_HOST_PORT`).
+
+## 2026-10-09 — Monthly DevDocs sync entrypoint built (coordinator)
+
+`devdocs_sync` no longer raises NotImplementedError. New
+`services/crawler/devdocs_manifest.py` (strict YAML-subset parser, no new
+deps): reads approved seed manifest, re-resolves `:latest` digest via GHCR,
+stages the image without executing it, builds {docset: version} from db.json
+mtime, diffs against catalog (changed/unchanged/added/removed; removed stay
+searchable per §4 append-only). New `enqueue_devdocs_sync()` RQ job;
+crawler-worker does the pull+ingest.
+Scheduling: new `devdocs-scheduler` compose service (same image,
+SCHEDULER_JOB=devdocs_sync, 30-day cadence) via a `JOB_REFRESHERS` registry
+in services/scheduler. Manual: `python -m scheduler.run --once --job
+devdocs_sync`. No-manifest → clear error naming the path.
+Tests: crawler 88 passed (31 new), scheduler 50 (15 new). Assumptions for
+James: image internals (/app/public/docs, db.json mtime) unverified until
+first H200 run; docker socket NOT mounted (his explicit deploy decision);
+manifest is read-only at runtime (he re-pins on fresh staging).
+
+## 2026-10-09 — Gap sweep: vendored embedding hash re-pinned
+
+`test_vendored_contract_is_byte_identical` failed: the RustFS rename changed
+`services/embedding/vendor/ingestion/embeddings.py` (MinIO→RustFS comment)
+after the hash was pinned at port time. Verified the vendored copy is still
+byte-identical to new_DRUID's source; re-pinned VENDORED_EMBEDDINGS_SHA256.
+Full new_sage tree: 461 passed, 2 skipped, 0 failed.
+
+## 2026-10-09 — pymilvus pin unified + root README
+- Unified `pymilvus` to `==2.5.6` in `services/ingestion/requirements.txt`
+  and `services/crawler/requirements.txt` (were 2.4.6; only usage is
+  `MilvusClient(uri, token)`, stable across both). Tests green:
+  crawler 88 passed, ingestion 30 passed.
+- Added beautiful root `README.md`: hero + corpus/freshness table,
+  architecture diagram (cora, single host port 8010), quickstart, MCP tool
+  table, config highlights, repo layout, offline-first, test counts
+  (461 passed / 2 skipped), docs + skill links, H200-remaining status.
