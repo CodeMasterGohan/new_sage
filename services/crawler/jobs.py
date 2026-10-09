@@ -8,7 +8,11 @@ RQ entry points (importable by dotted path; all arguments picklable):
   has a ``repo_url``; web crawl is the fallback.
 - ``refresh_stale()`` — §12 sweep: enqueue an RQ crawl per stale version.
 - ``devdocs_sync(manifest=None)`` — §5.1.1 monthly DevDocs image sync;
-  diffs a provided ``{docset: version}`` manifest against the catalog.
+  with an explicit ``{docset: version}`` manifest it diffs + ingests
+  directly; without one (production) it loads the approved seed manifest,
+  re-resolves the image digest, pulls, stages, and diffs. ``enqueue_``
+  ``devdocs_sync()`` puts one sync job on the ``sage-crawl`` queue for the
+  worker — that is what the monthly scheduler calls.
 
 Each entry point builds its real dependencies (catalog session from
 ``DATABASE_URL``, ``PoliteFetcher``, ``RustFSSnapshotStore``, the
@@ -37,6 +41,7 @@ import re
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -50,6 +55,10 @@ log = logging.getLogger("sage.crawler.jobs")
 
 CRAWL_QUEUE = "sage-crawl"
 DEVDOCS_IMAGE = "ghcr.io/freecodecamp/devdocs:latest"
+#: Ecosystem marker stamped on DevDocs-sourced library records so the
+#: monthly sync can tell DevDocs docsets apart from other seed sources
+#: (MDN, tldr) when detecting removed docsets.
+DEVDOCS_ECOSYSTEM = "devdocs"
 MAX_SITEMAP_URLS = 5000  # safety cap per (library, version) crawl
 
 
@@ -661,16 +670,26 @@ def refresh_stale() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# devdocs_sync (§5.1.1 monthly sync — diff logic; docker pull is stubbed)
+# devdocs_sync (§5.1.1 monthly sync)
 # ---------------------------------------------------------------------------
+#
+# Production flow (manifest=None): load the approved seed manifest
+# (services/artifacts/manifests/seed-corpus.yaml, APPROVAL-2026-101) for
+# the digest-pinned image reference → re-resolve :latest's digest via
+# registry metadata → docker pull the resolved digest → stage the docset
+# tree out of the image → build {docset: version} → diff → ingest.
+# Manifest plumbing lives in .devdocs_manifest (stdlib-only); the diff
+# and ingest cores below stay injectable for offline tests.
 
 
 def _pull_devdocs_image(image: str = DEVDOCS_IMAGE) -> None:
     """PRODUCTION ONLY — shell out to ``docker pull``.
 
     Clearly-marked subprocess call: tests must NEVER invoke this (it needs
-    docker and the network). ``devdocs_sync`` only reaches it when no
-    manifest is provided.
+    docker and the network). ``devdocs_sync`` only reaches it on the
+    production path, after the manifest is loaded and the digest
+    re-resolved — the pull itself is the one explicitly approved network
+    fetch in this design (spec §5.1.1).
     """
     import subprocess
 
@@ -678,18 +697,61 @@ def _pull_devdocs_image(image: str = DEVDOCS_IMAGE) -> None:
     subprocess.run(["docker", "pull", image], check=True, timeout=1800)
 
 
-def _extract_docset_from_image(docset: str) -> Path:
-    """Locate an extracted docset directory from the DevDocs image.
+@contextmanager
+def _staged_production_manifest():
+    """Build the production ``{docset: version}`` manifest from the image.
 
-    STUB: parsing the pulled image into per-docset directories is not
-    implemented — pass an explicit ``extractor`` (tests do) or implement
-    image inspection here.
+    Yields ``(manifest, docset_dirs, image_info)`` with the staging
+    directory alive; cleans it up on exit. Raises
+    :class:`DevDocsManifestError` (via ``devdocs_manifest``) with an
+    actionable message on any failure — missing manifest file, bad digest,
+    registry unreachable, docker unavailable.
     """
-    raise NotImplementedError(
-        f"extracting docset {docset!r} from the DevDocs image is not "
-        "implemented: pull the image and mount its docset directories, or "
-        "pass an explicit extractor."
+    from .devdocs_manifest import (
+        docset_manifest_from_stage,
+        load_devdocs_image_ref,
+        resolve_latest_digest,
+        stage_image_docsets,
     )
+
+    ref = load_devdocs_image_ref()
+    latest_digest = resolve_latest_digest(ref.repo)
+    if latest_digest != ref.digest:
+        log.info(
+            "devdocs sync: image moved since approval (pinned sha256:%s -> "
+            "sha256:%s); pulling the resolved digest",
+            ref.digest,
+            latest_digest,
+        )
+    image = "%s@sha256:%s" % (ref.repo, latest_digest)
+    _pull_devdocs_image(image)
+    with tempfile.TemporaryDirectory(prefix="devdocs-sync-") as staging:
+        docsets_root = stage_image_docsets(image, staging)
+        manifest = docset_manifest_from_stage(docsets_root)
+        docset_dirs = {name: docsets_root / name for name in manifest}
+        image_info = {
+            "image": image,
+            "resolved_digest": latest_digest,
+            "pinned_digest": ref.digest,
+            "manifest_path": str(ref.manifest_path),
+            "approval_record": ref.approval_record,
+        }
+        yield manifest, docset_dirs, image_info
+
+
+def _served_version_string(repo, lib) -> str | None:
+    """Version string currently served for a library (informational).
+
+    The ``is_latest`` READY row when one is flagged (what
+    ``get-library-docs`` falls back to); otherwise the newest READY row.
+    """
+    from services.catalog.models import VersionStatus
+
+    latest = repo.get_latest_version(lib.id)
+    if latest is not None:
+        return latest.version
+    rows = repo.list_versions(lib.id, status=VersionStatus.READY, limit=1)
+    return rows[0].version if rows else None
 
 
 def devdocs_diff(manifest: dict[str, str], repo) -> list[dict]:
@@ -697,8 +759,19 @@ def devdocs_diff(manifest: dict[str, str], repo) -> list[dict]:
 
     Pure logic, no docker, no network: for each docset, the catalog's
     READY row for the manifest version decides. Returns one entry per
-    docset with ``action`` ``"skip"`` (unchanged — no re-chunk, no
-    re-embed) or ``"ingest"``.
+    manifest docset plus one per removed docset, each with:
+
+    - ``classification``: ``"unchanged"`` (READY row for the manifest
+      version exists — no re-chunk, no re-embed), ``"changed"`` (version
+      differs), ``"added"`` (no library row yet), or ``"removed"`` (the
+      catalog holds a DevDocs-sourced library absent from the manifest).
+    - ``action``: ``"skip"`` for unchanged/removed, ``"ingest"`` for
+      changed/added.
+
+    Removed docsets are never deleted: the catalog is append-only (§4),
+    so they stay searchable until explicitly pruned. Removal is detected
+    via the ``devdocs`` ecosystem marker that ``devdocs_sync_impl``
+    stamps on every library it creates or ingests.
     """
     changes: list[dict] = []
     for docset in sorted(manifest):
@@ -711,14 +784,49 @@ def devdocs_diff(manifest: dict[str, str], repo) -> list[dict]:
             row = repo.get_active_version(lib.id, manifest_version)
             if row is not None:
                 catalog_version = manifest_version
+        if catalog_version == manifest_version:
+            classification, action = "unchanged", "skip"
+        elif lib is None:
+            classification, action = "added", "ingest"
+        else:
+            classification, action = "changed", "ingest"
         changes.append(
             {
                 "docset": docset,
                 "manifest_version": manifest_version,
                 "catalog_version": catalog_version,
-                "action": "skip" if catalog_version == manifest_version else "ingest",
+                "classification": classification,
+                "action": action,
             }
         )
+    # Removed: DevDocs-sourced catalog libraries absent from the manifest.
+    # Paginated: a full seed corpus is dozens of libraries, but never
+    # assume it fits one page.
+    offset = 0
+    while True:
+        libs = repo.list_libraries(
+            ecosystem=DEVDOCS_ECOSYSTEM, limit=500, offset=offset
+        )
+        if not libs:
+            break
+        for lib in libs:
+            if lib.name in manifest:
+                continue
+            changes.append(
+                {
+                    "docset": lib.name,
+                    "manifest_version": None,
+                    "catalog_version": _served_version_string(repo, lib),
+                    "classification": "removed",
+                    "action": "skip",
+                }
+            )
+            log.info(
+                "devdocs sync: docset %r removed upstream; keeping catalog "
+                "rows (append-only, §4)",
+                lib.name,
+            )
+        offset += len(libs)
     return changes
 
 
@@ -744,7 +852,11 @@ def devdocs_sync_impl(manifest, *, repo, ingest, extractor, importer=None,
         docset, mver = change["docset"], change["manifest_version"]
         lib = repo.get_library_by_name(docset)
         if lib is None:
-            lib = repo.create_library(name=docset)
+            lib = repo.create_library(name=docset, ecosystem=DEVDOCS_ECOSYSTEM)
+        elif lib.ecosystem != DEVDOCS_ECOSYSTEM:
+            # Backfill the marker on libraries created before it existed,
+            # so removed-docset detection (devdocs_diff) sees them.
+            repo.update_library(lib.id, ecosystem=DEVDOCS_ECOSYSTEM)
         # Spec §4: re-ingest INSERTs a new revision; never mutates the row.
         version_row, prev_active_id = _begin_version_ingest(
             repo, lib, mver, source="seed"
@@ -770,23 +882,99 @@ def devdocs_sync_impl(manifest, *, repo, ingest, extractor, importer=None,
 def devdocs_sync(manifest: dict[str, str] | None = None) -> dict:
     """RQ entry point: monthly DevDocs sync (§5.1.1, §17.6).
 
-    With a manifest, runs the diff + ingest path. Without one (production),
-    pulls the image via the stubbed ``docker pull`` and then raises
-    ``NotImplementedError`` until image-manifest parsing is implemented —
-    never silently pretending to have synced.
+    With an explicit ``{docset: version}`` manifest, runs the diff +
+    ingest path (tests and manual runs pass ``extractor`` through
+    ``devdocs_sync_impl`` directly). Without one — the production path —
+    loads the approved seed manifest, re-resolves the image digest via
+    registry metadata, pulls the resolved digest, stages the docset tree
+    out of the image, and syncs from that. A ``crawl_job`` row of kind
+    ``devdocs_sync`` records the run durably; any failure marks it
+    ``failed`` with the error and re-raises — never silently pretending
+    to have synced.
     """
+    from services.catalog.models import JobKind, JobStatus
+
     if manifest is None:
-        _pull_devdocs_image()
-        raise NotImplementedError(
-            "DevDocs image-manifest parsing is not implemented yet: pass "
-            "manifest={docset: version} explicitly."
-        )
+        # Fail fast on manifest problems (missing file, bad digest) with
+        # the clear path-pointing error — before touching the database.
+        from .devdocs_manifest import load_devdocs_image_ref
+
+        load_devdocs_image_ref()
+
     repo = _open_repo()
+    job_row = None
     try:
-        return devdocs_sync_impl(
-            manifest, repo=repo, ingest=_real_ingest,
-            extractor=_extract_docset_from_image,
-            vector_store=_real_vector_store(),
-        )
+        job_row = repo.enqueue_job(kind=JobKind.DEVDOCS_SYNC)
+        repo.update_job_status(job_row.id, JobStatus.RUNNING)
+        if manifest is None:
+            with _staged_production_manifest() as (prod_manifest, docset_dirs, image_info):
+                result = devdocs_sync_impl(
+                    prod_manifest,
+                    repo=repo,
+                    ingest=_real_ingest,
+                    extractor=docset_dirs.__getitem__,
+                    vector_store=_real_vector_store(),
+                )
+                result["image"] = image_info
+        else:
+            result = devdocs_sync_impl(
+                manifest,
+                repo=repo,
+                ingest=_real_ingest,
+                extractor=_require_explicit_extractor,
+                vector_store=_real_vector_store(),
+            )
+        repo.update_job_status(job_row.id, JobStatus.SUCCEEDED)
+        result["crawl_job_id"] = str(job_row.id)
+        return result
+    except Exception as exc:
+        if job_row is not None:
+            repo.update_job_status(
+                job_row.id, JobStatus.FAILED,
+                error="%s: %s" % (type(exc).__name__, exc),
+            )
+        raise
     finally:
         repo.session.close()
+
+
+def _require_explicit_extractor(docset: str) -> Path:
+    """Extractor guard for ``devdocs_sync(manifest={...})`` without one.
+
+    The production path (``manifest=None``) stages the image itself; an
+    explicit manifest needs an explicit extractor — fail closed with a
+    clear message instead of a bare NotImplementedError.
+    """
+    from .devdocs_manifest import DEVDOCS_MANIFEST_ENV, DevDocsManifestError
+
+    raise DevDocsManifestError(
+        "devdocs_sync() called with an explicit manifest but no extractor: "
+        "pass extractor= to devdocs_sync_impl(), or call devdocs_sync() "
+        "with manifest=None so the approved seed manifest "
+        "(%s) drives the image pull + staging" % DEVDOCS_MANIFEST_ENV
+    )
+
+
+def enqueue_devdocs_sync(
+    *,
+    connection=None,
+    job_timeout: int = 6 * 3600,
+) -> str:
+    """Enqueue one monthly DevDocs sync on the ``sage-crawl`` queue.
+
+    Mirrors :func:`enqueue_crawl`: the worker runs
+    ``services.crawler.jobs.devdocs_sync`` (manifest=None → production
+    image path). The monthly scheduler calls this — it never pulls or
+    ingests anything itself. Generous timeout: a pull plus a multi-docset
+    ingest is hours of work, not minutes.
+    """
+    from rq import Queue
+
+    conn = connection or _redis()
+    queue = Queue(CRAWL_QUEUE, connection=conn)
+    job = queue.enqueue(
+        "services.crawler.jobs.devdocs_sync",
+        job_timeout=job_timeout,
+    )
+    log.info("enqueued devdocs_sync job %s", job.id)
+    return job.id
