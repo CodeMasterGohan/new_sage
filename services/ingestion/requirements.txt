@@ -1,0 +1,18 @@
+# New_sage ingestion service — Python 3.11+
+# Offline-first policy: nothing here downloads models at runtime.
+
+trafilatura==2.3.1        # HTML -> Markdown (primary, spec §5.3)
+readability-lxml==0.9     # HTML -> Markdown fallback
+lxml==6.1.3
+lxml_html_clean==0.4.5
+rq==2.12.0                # job queue (production worker)
+redis==8.1.0
+requests==2.34.2          # embedding-service HTTP client
+pymilvus==2.4.6           # Milvus sage_chunks sink (lazy import)
+pdftext==0.4.1            # PDF fallback (spec §5.4); CPU-only, no models
+pypdfium2==4.30.0         # pdftext 0.4.1 pins ==4.30.0
+sqlalchemy==2.0.38        # real CatalogWriter via services.catalog (Wave 2)
+psycopg[binary]==3.2.9    # Postgres driver for the catalog writer
+
+# test-only
+pytest==9.1.1
