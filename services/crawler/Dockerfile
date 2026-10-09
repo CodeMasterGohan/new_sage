@@ -20,6 +20,10 @@ COPY services/__init__.py /app/services/__init__.py
 COPY services/crawler /app/services/crawler
 COPY services/catalog /app/services/catalog
 COPY services/ingestion /app/services/ingestion
+# The approved seed manifest (APPROVAL-2026-101): the monthly devdocs_sync
+# production path reads it from here by default (DEVDOCS_MANIFEST_PATH
+# overrides). Mount or rebuild to re-pin.
+COPY services/artifacts/manifests /app/services/artifacts/manifests
 
 ENV REDIS_URL="" \
     DATABASE_URL="" \
