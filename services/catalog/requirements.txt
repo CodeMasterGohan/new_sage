@@ -1,0 +1,7 @@
+# Pinned 2026-10-08. Python 3.11+.
+# Pin set adapted from the new_DRUID catalog (verified installable 2026-10-08);
+# pydantic/structlog dropped — the catalog has no use for them.
+sqlalchemy==2.0.38
+alembic==1.15.2
+psycopg[binary]==3.2.9
+pytest==8.3.5

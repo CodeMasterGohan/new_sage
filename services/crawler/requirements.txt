@@ -1,0 +1,25 @@
+# New_sage crawler service — Python 3.11+
+# Offline-first policy: nothing here downloads models at runtime.
+# Pins verified installable 2026-10-08 (align with sibling services where shared).
+
+requests==2.34.2          # polite HTTP fetching
+rq==2.12.0                # job queue (production worker)
+redis==8.1.0              # RQ transport
+minio==7.2.16             # raw HTML snapshot store (S3-compatible)
+sqlalchemy==2.0.38        # catalog access (matches catalog service pin)
+psycopg[binary]==3.2.9    # Postgres driver (matches catalog service pin)
+
+# Ingestion runtime deps (Wave 5 fix): the crawler imports
+# services.ingestion lazily at job time (pipeline.ingest_pages,
+# html_to_md.html_to_markdown, importers). Pins match the ingestion
+# service exactly so the in-process ingest path has its full closure.
+trafilatura==2.3.1        # HTML -> Markdown (primary)
+readability-lxml==0.9     # HTML -> Markdown fallback
+lxml==6.1.3
+lxml_html_clean==0.4.5
+pymilvus==2.4.6           # Milvus sink (lazy import in pipeline.py)
+pdftext==0.4.1            # PDF fallback (lazy import)
+pypdfium2==4.30.0         # pdftext 0.4.1 pins ==4.30.0
+
+# test-only
+pytest==9.1.1
