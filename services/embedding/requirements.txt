@@ -1,0 +1,18 @@
+# Pinned 2026-10-08 (verified in the new_DRUID hardening run):
+# sentence-transformers 3.4.1 / transformers 4.48.3 could NOT load the
+# released google/embeddinggemma-2 checkpoint (needs ST>=6.1.0, transformers
+# 5.x per its config_sentence_transformers.json). Re-pinned to ST==6.1.0 /
+# transformers==5.18.0 (checkpoint built with 5.18.0.dev0); pip-compile
+# (pip-tools 7.6.2) resolves the full closure consistently.
+# CPU-only torch: install torch from the CPU index FIRST, e.g.
+#   pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0
+# then install this file. (GPU torch must never land here — spec §13:
+# new_sage has no GPU requirement anywhere.)
+sentence-transformers==6.1.0
+torch==2.6.0
+transformers==5.18.0
+huggingface-hub==1.33.0  # pip-compile 2026-10-08: ST 6.1.0 requires >=1.3.0
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pydantic==2.11.7
+pydantic-settings==2.7.1
