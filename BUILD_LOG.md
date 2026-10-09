@@ -370,3 +370,116 @@ skipped, artifacts 51, eval 28, tests-e2e 18 → **399 passed, 2 skipped,
 score report on stdout / diagnostics on stderr; artifacts CLI verdict on
 stdout / lifecycle on stderr; MCP server banner + typo-suggestion + tool
 lifecycle logs; stdio adapter stderr-only enforced via basicConfig stream.
+
+---
+
+## 2026-10-09 — Follow-ups: port block move, refresh scheduler (Finch)
+
+### 1. Host-port defaults moved (H200 shared with new_DRUID)
+Container ports unchanged; only host mappings moved to a free block:
+mcp 8010, retrieval 8011, embedding 8012, postgres 5433, redis 6380,
+minio 9010/9011, milvus 19531/9092. Updated `deploy/docker-compose.yml`
+(line-14 comment now states the container-port contract + the new host block
+and the DRUID ports it avoids), `deploy/.env.example`, `deploy/README.md`,
+and host-port `localhost:` examples in `services/milvus_setup/`
+(19530→19531), `services/catalog/alembic/env.py` (5432→5433),
+`services/mcp_server` stdio_adapter/README/tests (8001→8011),
+`services/embedding/README.md` (-p 8012:8002, base URL 8012).
+Compose-DNS URLs, in-container healthchecks, EXPOSE, and settings ports kept.
+Cross-project collision coverage lives in new_DRUID's
+`tests/test_deploy_wiring.py` (skips if the sage tree is absent).
+
+### 2. New service: scheduler (weekly refresh)
+The crawler README's "compose scheduler (weekly)" was fiction — no scheduler
+existed. Built `services/scheduler/` (stdlib-only, zero third-party imports):
+- `scheduler.py`: `Scheduler` loop, `SchedulerConfig.from_env()`,
+  `parse_interval_seconds()` (accepts `7d`/`12h`/`30m`/`90s` suffixes or raw
+  seconds). Crawler import is lazy so the module imports dependency-free.
+- `run.py`: CLI `python -m scheduler.run --once` (exit 0 ok / 1 sweep failed /
+  2 bad config; JSON summary on stdout).
+- Calls the real entrypoint `services.crawler.jobs.refresh_stale() ->
+  list[dict]` in-process (opens the catalog itself, enqueues one RQ
+  `crawl_library_version` job per stale version). Verified live: a `--once`
+  run without DATABASE_URL reached the real function and surfaced its
+  RuntimeError as a captured failure, not a crash.
+- Behavior: default 7 days (`REFRESH_INTERVAL_SECONDS`, per §17.6), startup
+  jitter `SCHEDULER_STARTUP_JITTER_SECONDS` (default 600s, 0 disables),
+  structured per-run logs with run id, failures never crash the loop —
+  backoff `interval × 2^failures` capped at 8×, success resets.
+- `Dockerfile` (python:3.11-slim, offline env, installs crawler requirements
+  for the in-process call), compose service with `depends_on` postgres
+  (healthy), catalog-migrate (completed), redis (healthy), crawler-worker
+  (started). Scheduler needs only REDIS_URL + DATABASE_URL (it enqueues;
+  it never crawls, so no MinIO).
+- Crawler README fiction replaced; docs-site `sage-ingestion-freshness.md`,
+  `sage-configuration.md`, `sage-deployment.md` updated.
+- Tests: 35/35 (interval parsing, --once exit codes, backoff cap, jitter,
+  log structure). Crawler 57/57, mcp_server 63+1skip, milvus_setup 21+1skip,
+  catalog 66 — all green, no regressions.
+
+### Known gaps (needs James)
+- Monthly DevDocs sync has no schedulable entrypoint (`devdocs_sync` without a
+  manifest raises NotImplementedError) — wire a monthly timer into the
+  scheduler once the manifest plumbing lands.
+- MinIO pin retried 2026-10-09: `minio/minio` no longer exists on Docker Hub
+  at all (repo removed). Both compose files still on `:latest`. Decision
+  needed: replacement image (e.g. quay.io/minio/minio with a dated RELEASE
+  tag) or keep `:latest`.
+
+## 2026-10-09 — MinIO → RustFS swap (James approved; local only, NOT pushed)
+
+MinIO community edition is dead (repo archived, Docker Hub repos deleted),
+resolving the "MinIO pin retried" known gap above. RustFS
+`rustfs/rustfs:1.0.1` (pinned) replaces it 1:1 as the S3-compatible object
+store. Python client unchanged: the `minio==7.2.16` package works unmodified
+against RustFS.
+
+- `deploy/docker-compose.yml`: `minio` service → `rustfs` service
+  (image `rustfs/rustfs:1.0.1`, `command: ["--console-address", ":9001"]`,
+  `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` env, `rustfsdata:/data`, host ports
+  9010/9011 unchanged, healthcheck `curl -f http://localhost:9000/health`,
+  non-root UID 10001 noted). `ingestion-worker` and `crawler-worker` env now
+  `RUSTFS_ENDPOINT=rustfs:9000` + `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`/
+  `RUSTFS_BUCKET` (defaults `sage`/`sage-rustfs`/`sage-snapshots`).
+  `milvus-standalone` keeps the `MINIO_*` names Milvus itself requires
+  (`MINIO_ADDRESS: rustfs:9000`, keys from the `RUSTFS_*` vars).
+  Volume `miniodata` → `rustfsdata`; all `depends_on` updated.
+- `deploy/.env.example`: `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` →
+  `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY`; `MINIO_HOST_PORT`/
+  `MINIO_CONSOLE_HOST_PORT` → `RUSTFS_HOST_PORT`/`RUSTFS_CONSOLE_HOST_PORT`.
+- `services/crawler/snapshots.py`: `MinioSnapshotStore` →
+  `RustFSSnapshotStore`; env reads `RUSTFS_ENDPOINT`/`RUSTFS_ACCESS_KEY`/
+  `RUSTFS_SECRET_KEY`/`RUSTFS_BUCKET`/`RUSTFS_SECURE`; error message now
+  "RUSTFS_ENDPOINT is not set". `minio` package import kept.
+- `services/crawler/jobs.py` (import + `RustFSSnapshotStore()` wiring +
+  docstrings), `services/crawler/tests/test_snapshots.py` (env names,
+  `match="RUSTFS_ENDPOINT"`, `FakeRustFSClient`, renamed tests), crawler
+  `__init__.py`, `Dockerfile`, `requirements.txt` comment, `README.md`
+  (env table, run example, MinIO tarball → RustFS tarball), scheduler
+  `Dockerfile` comment, catalog `models.py`/`README.md` comments,
+  `deploy/README.md` (service map, volumes, Milvus note, first-run order),
+  embedding vendor comment.
+- Intentionally left: `MINIO_*` in the milvus-standalone service (Milvus
+  requires those names); historical BUILD_LOG entries above (past record);
+  two comments describing **new_DRUID's** port block (`minio 9000/9001` on
+  the druid side — new_DRUID has not been swapped, changing them would be
+  false); the `minio` Python package itself.
+- Stale `.pytest_cache` with old test IDs deleted.
+
+Verification: `docker compose config` could NOT be run — no docker on this
+VM. Instead: YAML parses clean; scripted assertions pass (13 services,
+`depends_on` targets all resolve, `rustfs` image/command/env/volume/ports/
+healthcheck/restart all match the target spec, milvus + worker env vars
+correct). Tests: crawler 57/57, scheduler 35/35, catalog 66/66 — all pass,
+no failures. Full-tree grep: zero stray `MINIO`/`minio:`/`Minio` hits
+outside the intentional exceptions above. Compose stack not started here
+(no docker, no H200 artifacts); runtime behavior of the RustFS image
+(first-boot volume ownership as UID 10001, `/health` endpoint) needs
+verification on James's box at first `docker compose up`.
+
+## 2026-10-09 — Docs/skill sync for MinIO→RustFS swap (Finch)
+
+- `~/workspace/druid-sage-docs/src/`: all MinIO references updated to RustFS
+  (`sage-overview.md`, `sage-architecture.md`, `sage-ingestion-freshness.md`,
+  `sage-deployment.md`, `sage-configuration.md`). Site rebuilt: link check
+  378/378 pass. Repo copy `build/docs-site/` re-synced.

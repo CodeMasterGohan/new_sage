@@ -10,13 +10,16 @@
 # milvusdb/milvus:latest. The etcd service listens on the internal network
 # only (no published ports) and is NOT part of the client port contract.
 #
-# Port contract (spec §13; sibling agents rely on these):
+# Port contract (spec §13; sibling agents rely on these) — container ports,
+# never remapped:
 #   mcp-server 8000 | retrieval 8001 | embedding 8002 | ingestion-worker (no ports)
-#   milvus-standalone 19530/9091 | minio 9000/9001 | postgres 5432 | redis 6379
+#   milvus-standalone 19530/9091 | rustfs 9000/9001 | postgres 5432 | redis 6379
 #
-# Host ports are overridable via ${*_HOST_PORT} env (defaults below). If this
-# stack runs on the same box as new_DRUID, which publishes the same host
-# ports, set the overrides in .env so the two stacks do not collide.
+# Host ports are overridable via ${*_HOST_PORT} env (defaults below). The
+# defaults below live in the 8010/9010/19531 block so this stack does NOT
+# collide with new_DRUID on the same host (druid: gateway 8080, vLLM 8000,
+# document_api 8001, mcp 8002, embedding 8003, retrieval 8004, web_ui 8005,
+# minio 9000/9001, milvus 19530/9091). Override in .env to change them.
 # Inter-service URLs always use the fixed container ports + compose DNS names.
 name: sage
 
@@ -30,7 +33,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "${POSTGRES_HOST_PORT:-5432}:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sage} -d ${POSTGRES_DB:-sage}"]
       interval: 5s
@@ -44,7 +47,7 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "${REDIS_HOST_PORT:-6379}:6379"
+      - "${REDIS_HOST_PORT:-6380}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -52,19 +55,22 @@ services:
       retries: 10
     restart: unless-stopped
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  # RustFS replaces MinIO (MinIO community edition was archived in 2026;
+  # its Docker Hub repos were deleted). S3-compatible object store; the
+  # image runs as non-root UID 10001 by default.
+  rustfs:
+    image: rustfs/rustfs:1.0.1
+    command: ["--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sage}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sage-minio}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
-      - miniodata:/data
+      - rustfsdata:/data
     ports:
-      - "${MINIO_HOST_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+      - "${RUSTFS_HOST_PORT:-9010}:9000"
+      - "${RUSTFS_CONSOLE_HOST_PORT:-9011}:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -94,21 +100,22 @@ services:
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
-      # Milvus shares OUR MinIO (separate bucket 'sage-milvus') instead of
-      # running its own object store.
-      MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-sage}
-      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-sage-minio}
+      # Milvus shares OUR RustFS (separate bucket 'sage-milvus') instead of
+      # running its own object store. The MINIO_* names below are REQUIRED
+      # by Milvus itself — they point at RustFS's S3-compatible endpoint.
+      MINIO_ADDRESS: rustfs:9000
+      MINIO_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-sage}
+      MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
       MINIO_USE_SSL: "false"
     volumes:
       - milvusdata:/var/lib/milvus
     ports:
-      - "${MILVUS_HOST_PORT:-19530}:19530"
-      - "${MILVUS_MGMT_HOST_PORT:-9091}:9091"
+      - "${MILVUS_HOST_PORT:-19531}:19530"
+      - "${MILVUS_MGMT_HOST_PORT:-9092}:9091"
     depends_on:
       etcd:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
@@ -161,7 +168,7 @@ services:
       # (offline-first, spec §14) — see deploy/README.md for staging.
       - model-artifacts:/artifacts:ro
     ports:
-      - "${EMBEDDING_HOST_PORT:-8002}:8002"
+      - "${EMBEDDING_HOST_PORT:-8012}:8002"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8002'"]
       interval: 10s
@@ -185,7 +192,7 @@ services:
     volumes:
       - model-artifacts:/artifacts:ro
     ports:
-      - "${RETRIEVAL_HOST_PORT:-8001}:8001"
+      - "${RETRIEVAL_HOST_PORT:-8011}:8001"
     depends_on:
       milvus-standalone:
         condition: service_healthy
@@ -215,7 +222,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
       REDIS_URL: redis://redis:6379/0
     ports:
-      - "${MCP_HOST_PORT:-8000}:8000"
+      - "${MCP_HOST_PORT:-8010}:8000"
     depends_on:
       retrieval:
         condition: service_healthy
@@ -242,9 +249,9 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
       MILVUS_URI: http://milvus-standalone:19530
       EMBEDDING_URL: http://embedding:8002
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-sage}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-sage-minio}
+      RUSTFS_ENDPOINT: rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
     volumes:
       - model-artifacts:/artifacts:ro
     depends_on:
@@ -254,7 +261,7 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
       embedding:
         condition: service_healthy
@@ -273,10 +280,10 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-sage}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-sage}
-      MINIO_BUCKET: ${MINIO_BUCKET:-sage-snapshots}
+      RUSTFS_ENDPOINT: rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-sage-snapshots}
     depends_on:
       postgres:
         condition: service_healthy
@@ -284,14 +291,42 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    # Weekly refresh_stale sweep (§12 stale-while-revalidate, §17.6).
+    # Runs services.crawler.jobs.refresh_stale() in-process once per
+    # REFRESH_INTERVAL_SECONDS (default 7 days), with startup jitter;
+    # failures log and back off, never crash the loop. Enqueues crawl jobs
+    # on the sage-crawl queue — crawler-worker consumes them.
+    # Manual trigger: docker compose run --rm scheduler python -m scheduler.run --once
+    build:
+      context: ..
+      dockerfile: services/scheduler/Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      REFRESH_INTERVAL_SECONDS: ${REFRESH_INTERVAL_SECONDS:-604800}
+      SCHEDULER_STARTUP_JITTER_SECONDS: ${SCHEDULER_STARTUP_JITTER_SECONDS:-600}
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      crawler-worker:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
-  miniodata:
+  rustfsdata:
   etcddata:
   milvusdata:
   model-artifacts:

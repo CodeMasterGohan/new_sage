@@ -9,30 +9,33 @@ boundary. Do not expose these ports to the public internet.
 
 | Service | Container port | Default host port | What it is |
 |---|---|---|---|
-| `mcp-server` | 8000 | `${MCP_HOST_PORT:-8000}` | FastMCP: `resolve-library-id`, `get-library-docs` (spec §10) |
-| `retrieval` | 8001 | `${RETRIEVAL_HOST_PORT:-8001}` | RRF hybrid (dense+BM25+identifier) + MiniLM rerank (spec §9) |
-| `embedding` | 8002 | `${EMBEDDING_HOST_PORT:-8002}` | EmbeddingGemma 2, CPU-served, 768-dim (spec §8) |
+| `mcp-server` | 8000 | `${MCP_HOST_PORT:-8010}` | FastMCP: `resolve-library-id`, `get-library-docs` (spec §10) |
+| `retrieval` | 8001 | `${RETRIEVAL_HOST_PORT:-8011}` | RRF hybrid (dense+BM25+identifier) + MiniLM rerank (spec §9) |
+| `embedding` | 8002 | `${EMBEDDING_HOST_PORT:-8012}` | EmbeddingGemma 2, CPU-served, 768-dim (spec §8) |
 | `ingestion-worker` | — | — | RQ worker: crawl → trafilatura → chunk → embed → index (spec §5) |
-| `milvus-standalone` | 19530 / 9091 | `${MILVUS_HOST_PORT:-19530}` / `${MILVUS_MGMT_HOST_PORT:-9091}` | `sage_chunks` collection (spec §9.1) |
-| `minio` | 9000 / 9001 | `${MINIO_HOST_PORT:-9000}` / `${MINIO_CONSOLE_HOST_PORT:-9001}` | raw snapshots + seed checkouts (spec §11) |
-| `postgres` | 5432 | `${POSTGRES_HOST_PORT:-5432}` | catalog: libraries, versions, pages, jobs (spec §11) |
-| `redis` | 6379 | `${REDIS_HOST_PORT:-6379}` | crawl queue + hot-response cache (spec §11) |
+| `milvus-standalone` | 19530 / 9091 | `${MILVUS_HOST_PORT:-19531}` / `${MILVUS_MGMT_HOST_PORT:-9092}` | `sage_chunks` collection (spec §9.1) |
+| `rustfs` | 9000 / 9001 | `${RUSTFS_HOST_PORT:-9010}` / `${RUSTFS_CONSOLE_HOST_PORT:-9011}` | raw snapshots + seed checkouts (spec §11) |
+| `postgres` | 5432 | `${POSTGRES_HOST_PORT:-5433}` | catalog: libraries, versions, pages, jobs (spec §11) |
+| `redis` | 6379 | `${REDIS_HOST_PORT:-6380}` | crawl queue + hot-response cache (spec §11) |
 | `etcd` | — | — | internal only; required by milvus-standalone |
 
 One network (`sage-net`), named volumes: `pgdata`, `redisdata`,
-`miniodata`, `etcddata`, `milvusdata`, `model-artifacts`.
+`rustfsdata`, `etcddata`, `milvusdata`, `model-artifacts`.
 
 Milvus (`milvusdb/milvus:latest`, CPU) requires the `etcd` sidecar — embedded
 etcd was removed in Milvus 2.6.x, so etcd runs as a compose service even
 though it is not in the §13 service list. It publishes no ports.
 
-Milvus shares our MinIO for object storage (bucket `sage-milvus`, created by
+Milvus shares our RustFS for object storage (bucket `sage-milvus`, created by
 Milvus on first start under the root credentials).
 
-> **Colocating with new_DRUID on the same box:** both stacks publish the same
-> default host ports. Copy `.env.example` to `.env` and remap the
-> `${*_HOST_PORT}` variables for one of the stacks so they do not collide.
-> Inter-service URLs use the fixed container ports and never need changing.
+> **Colocating with new_DRUID on the same box:** the default host ports above
+> live in the 8010/9010/19531 block specifically so they do not collide with
+> new_DRUID's (gateway 8080, vLLM 8000, document_api 8001, mcp 8002,
+> embedding 8003, retrieval 8004, web_ui 8005, minio 9000/9001, milvus
+> 19530/9091). If you still need different ports, remap the `${*_HOST_PORT}`
+> variables in `.env`. Inter-service URLs use the fixed container ports and
+> never need changing.
 
 ## Staging model artifacts
 
@@ -73,7 +76,7 @@ cd ~/workspace/new_sage/build/deploy
 cp .env.example .env && $EDITOR .env
 
 # 1. base infrastructure
-docker compose up -d postgres redis minio etcd milvus-standalone
+docker compose up -d postgres redis rustfs etcd milvus-standalone
 
 # 2. create the sage_chunks collection + indexes (idempotent; safe to re-run)
 docker compose run --rm milvus_setup
@@ -91,7 +94,7 @@ Verify:
 
 ```bash
 docker compose run --rm milvus_setup python -m milvus_setup.create_collection --check-only
-curl http://localhost:8000/health   # mcp-server (once the service agent lands the app)
+curl http://localhost:8010/health   # mcp-server (once the service agent lands the app)
 ```
 
 ## Useful commands
