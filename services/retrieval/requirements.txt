@@ -1,0 +1,16 @@
+# Pinned 2026-10-08 — regenerate with pip-compile before release. Python 3.11+.
+# fastapi/uvicorn/pymilvus/psycopg/httpx/pydantic/pytest pins match
+# new_DRUID's retrieval service (verified closure 2026-10-08).
+# sentence-transformers/transformers/torch pins match new_DRUID's embedding
+# service (ST==6.1.0 / transformers==5.18.0, the versions the released
+# EmbeddingGemma 2 checkpoint requires; torch is CPU-only — install from
+# the CPU index first, see Dockerfile).
+fastapi==0.115.8
+uvicorn[standard]==0.34.0
+pymilvus==2.5.6
+psycopg[binary]==3.2.9
+httpx==0.28.1
+pydantic==2.11.7
+sentence-transformers==6.1.0
+transformers==5.18.0
+pytest==8.3.5
