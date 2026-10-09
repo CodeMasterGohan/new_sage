@@ -1,0 +1,58 @@
+# seed-corpus.yaml — P2 seed corpus pins (spec §5.1, §14).
+#
+# Resolved 2026-10-08 by Finch from upstream metadata ONLY — no corpus data
+# was downloaded:
+#   - DevDocs: GHCR registry API with an anonymous pull token (HEAD request
+#     on the :latest manifest; image index digest recorded below).
+#   - MDN content: `git ls-remote https://github.com/mdn/content.git HEAD`
+#   - tldr-pages:   `git ls-remote https://github.com/tldr-pages/tldr.git HEAD`
+#
+# Re-resolve with each source's `resolution_command` before staging a fresh
+# box. The monthly DevDocs sync (spec §5.1.1) re-pins the image digest with
+# the same command; MDN/tldr SHAs advance only when James approves a seed
+# refresh (default: stay pinned).
+#
+# This is a multi-source manifest: the top-level upstream_source/revision/
+# license are bundle markers, and source policy (https + allowlist +
+# prohibited hosts) is enforced per seed source URL instead.
+artifact_manifest:
+  artifact_name: "new_sage/seed-corpus"
+  upstream_source: "multiple — see seed_sources"
+  upstream_revision: "per-source (see seed_sources)"
+  internal_location: "/artifacts/seed-corpus"
+  license: "multiple — see seed_sources"
+  files: []
+  seed_sources:
+    - name: "DevDocs docsets (monthly image)"
+      kind: "docker-image"
+      upstream_url: "https://ghcr.io/freecodecamp/devdocs"
+      revision: "latest pinned to sha256:8623d9b9c6c3ac12bafbd3e378711c6f2d61a0baf23350c9da6e9261b3d66a60 (image index digest, resolved 2026-10-08)"
+      digest: "8623d9b9c6c3ac12bafbd3e378711c6f2d61a0baf23350c9da6e9261b3d66a60"
+      license: "varies per docset"
+      license_note: "DevDocs docsets carry per-docset licenses — the importer MUST capture the per-docset license at ingest time (spec §5.1) and store it on the library record. A single corpus-wide license value is not valid here."
+      resolution_command: |
+        docker pull ghcr.io/freecodecamp/devdocs:latest && docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/freecodecamp/devdocs:latest
+        # without pulling (metadata only):
+        # TOKEN=$(curl -s 'https://ghcr.io/token?service=ghcr.io&scope=repository:freecodecamp/devdocs:pull' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+        # curl -sI -H "Authorization: Bearer $TOKEN" -H 'Accept: application/vnd.oci.image.index.v1+json' https://ghcr.io/v2/freecodecamp/devdocs/manifests/latest | grep -i docker-content-digest
+        # Stage with: docker pull "ghcr.io/freecodecamp/devdocs@sha256:<digest>"
+      stage_dir: "devdocs-image"
+
+    - name: "MDN content"
+      kind: "git-repo"
+      upstream_url: "https://github.com/mdn/content"
+      revision: "fd0b11ad5b5014a9333578adcc4bc98fb9024da3"
+      license: "CC-BY-SA"
+      license_note: "Per spec §5.1. License files live in the repo checkout; importers record the repo-level license on ingested pages."
+      resolution_command: "git ls-remote https://github.com/mdn/content.git HEAD"
+      stage_dir: "mdn-content"
+
+    - name: "tldr-pages"
+      kind: "git-repo"
+      upstream_url: "https://github.com/tldr-pages/tldr"
+      revision: "6bbd7cc43d1c5bd12e35a1f2245eea9144fde1ba"
+      license: "CC-BY-SA 4.0"
+      license_note: "Per spec §5.1."
+      resolution_command: "git ls-remote https://github.com/tldr-pages/tldr.git HEAD"
+      stage_dir: "tldr"
+  approval_record: "APPROVAL-2026-101 — APPROVED by James 2026-10-09 (chat sign-off)"
