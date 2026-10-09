@@ -5,8 +5,13 @@ import pytest
 
 from scheduler.scheduler import (
     DEFAULT_INTERVAL_SECONDS,
+    DEFAULT_JOB,
+    DEVDOCS_SYNC_INTERVAL_SECONDS,
+    JOB_REFRESHERS,
     Scheduler,
     SchedulerConfig,
+    default_devdocs_sync,
+    default_refresh,
     parse_interval_seconds,
 )
 
@@ -344,3 +349,125 @@ class TestCliOnce:
         rc = run_module.main(["--once", "--interval-seconds", "2d"])
         assert rc == 0
         assert seen["interval"] == 2 * 86400
+
+
+# ---------------------------------------------------------------------------
+# job selection: refresh_stale (weekly) vs devdocs_sync (monthly)
+# ---------------------------------------------------------------------------
+
+
+class TestJobSelection:
+    def test_default_job_is_refresh_stale(self):
+        cfg = SchedulerConfig.from_env({})
+        assert cfg.job == "refresh_stale"
+        assert cfg.job == DEFAULT_JOB
+
+    def test_job_env_override(self):
+        cfg = SchedulerConfig.from_env({"SCHEDULER_JOB": "devdocs_sync"})
+        assert cfg.job == "devdocs_sync"
+
+    def test_job_env_whitespace_tolerated(self):
+        cfg = SchedulerConfig.from_env({"SCHEDULER_JOB": "  devdocs_sync "})
+        assert cfg.job == "devdocs_sync"
+
+    def test_invalid_job_raises(self):
+        with pytest.raises(ValueError, match="SCHEDULER_JOB"):
+            SchedulerConfig.from_env({"SCHEDULER_JOB": "nope"})
+
+    def test_job_registry(self):
+        assert JOB_REFRESHERS["refresh_stale"] is default_refresh
+        assert JOB_REFRESHERS["devdocs_sync"] is default_devdocs_sync
+
+    def test_monthly_cadence_registered(self):
+        """The monthly DevDocs sync cadence (§5.1.1, §17.6): 30 days."""
+        assert DEVDOCS_SYNC_INTERVAL_SECONDS == 30 * 24 * 3600
+
+    def test_scheduler_defaults_refresh_from_job(self):
+        sched, _, _ = make_scheduler(refresh=None, job="devdocs_sync")
+        assert sched.refresh is default_devdocs_sync
+
+    def test_scheduler_default_is_refresh_stale(self):
+        sched, _, _ = make_scheduler(refresh=None)
+        assert sched.refresh is default_refresh
+
+    def test_explicit_refresh_wins_over_job(self):
+        sentinel = lambda: []
+        sched, _, _ = make_scheduler(refresh=sentinel, job="devdocs_sync")
+        assert sched.refresh is sentinel
+
+
+class TestDefaultDevdocsSync:
+    def test_enqueues_one_sync_job(self, monkeypatch):
+        import sys
+        import types
+
+        fake = types.ModuleType("services.crawler.jobs")
+        calls = []
+
+        def fake_enqueue(**kwargs):
+            calls.append(kwargs)
+            return "rq-9"
+
+        fake.enqueue_devdocs_sync = fake_enqueue
+        monkeypatch.setitem(sys.modules, "services.crawler.jobs", fake)
+
+        result = default_devdocs_sync()
+        assert result == [{"job": "devdocs_sync", "rq_job_id": "rq-9"}]
+        assert calls == [{}]
+
+
+class TestCliJobFlag:
+    def _run_main(self, monkeypatch, argv):
+        from scheduler import run as run_module  # `python -m scheduler.run`
+
+        seen = {}
+
+        class FakeScheduler:
+            def __init__(self, config):
+                seen["job"] = config.job
+                seen["interval"] = config.interval_seconds
+
+            def run_once(self):
+                from scheduler.scheduler import RunResult
+
+                return RunResult(run_id="x", ok=True, enqueued=1)
+
+        monkeypatch.setattr(run_module, "Scheduler", FakeScheduler)
+        rc = run_module.main(argv)
+        return rc, seen
+
+    def test_job_flag_selects_devdocs_sync(self, monkeypatch):
+        rc, seen = self._run_main(monkeypatch, ["--once", "--job", "devdocs_sync"])
+        assert rc == 0
+        assert seen["job"] == "devdocs_sync"
+
+    def test_job_flag_defaults_to_env(self, monkeypatch):
+        monkeypatch.setenv("SCHEDULER_JOB", "devdocs_sync")
+        rc, seen = self._run_main(monkeypatch, ["--once"])
+        assert rc == 0
+        assert seen["job"] == "devdocs_sync"
+
+    def test_job_flag_overrides_env(self, monkeypatch):
+        monkeypatch.setenv("SCHEDULER_JOB", "devdocs_sync")
+        rc, seen = self._run_main(
+            monkeypatch, ["--once", "--job", "refresh_stale"]
+        )
+        assert rc == 0
+        assert seen["job"] == "refresh_stale"
+
+    def test_bad_job_exits_two(self, monkeypatch):
+        from scheduler import run as run_module  # `python -m scheduler.run`
+
+        monkeypatch.setattr(run_module, "Scheduler", lambda config: None)
+        with pytest.raises(SystemExit) as exc:
+            run_module.main(["--once", "--job", "nope"])
+        assert exc.value.code == 2
+
+    def test_bad_job_env_exits_two(self, monkeypatch):
+        from scheduler import run as run_module  # `python -m scheduler.run`
+
+        monkeypatch.setenv("SCHEDULER_JOB", "nope")
+        monkeypatch.setattr(run_module, "Scheduler", lambda config: None)
+        with pytest.raises(SystemExit) as exc:
+            run_module.main(["--once"])
+        assert exc.value.code == 2

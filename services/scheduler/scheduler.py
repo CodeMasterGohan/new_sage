@@ -1,23 +1,36 @@
 """Weekly refresh scheduler for New_sage (spec §12, §17.6).
 
-Runs the crawler's real ``refresh_stale()`` entry point
-(``services.crawler.jobs.refresh_stale() -> list[dict]``) once per
-configured interval, in-process — no invented APIs, no shell-outs.
+Runs one of two jobs on a fixed interval, in-process — no invented APIs,
+no shell-outs:
+
+- ``refresh_stale`` (default): the crawler's real ``refresh_stale()``
+  entry point (``services.crawler.jobs.refresh_stale() -> list[dict]``),
+  once per ``REFRESH_INTERVAL_SECONDS`` (default 7 days).
+- ``devdocs_sync``: the monthly DevDocs image sync (§5.1.1) via
+  ``services.crawler.jobs.enqueue_devdocs_sync()``, which puts one
+  ``devdocs_sync`` RQ job on the ``sage-crawl`` queue for the
+  crawler-worker to run. Selected with ``SCHEDULER_JOB=devdocs_sync``
+  (or ``--job``); the monthly cadence itself is a second compose service
+  (``devdocs-scheduler``) running this same image with
+  ``REFRESH_INTERVAL_SECONDS=2592000``.
 
 Design notes
 ------------
-- Stdlib only. The crawler import is **lazy** (inside
-  :func:`default_refresh`) so this module imports cleanly without the
-  crawler's third-party dependencies — unit tests mock the refresh call
-  and never touch Postgres/Redis.
+- Stdlib only. The crawler imports are **lazy** (inside
+  :func:`default_refresh` / :func:`default_devdocs_sync`) so this module
+  imports cleanly without the crawler's third-party dependencies — unit
+  tests mock the refresh call and never touch Postgres/Redis.
 - A failed run never crashes the loop: the error is logged, the failure
   counter increments, and the next wait is backed off exponentially
   (capped). A successful run resets the counter.
 - ``python -m scheduler.run --once`` (or ``python -m services.scheduler.run
-  --once``) performs a single sweep and exits 0/1.
+  --once``) performs a single sweep and exits 0/1; add
+  ``--job devdocs_sync`` to trigger the monthly sync instead.
 
 Environment
 -----------
+``SCHEDULER_JOB`` (default ``refresh_stale``): which job this scheduler
+instance runs — ``refresh_stale`` or ``devdocs_sync``.
 ``REFRESH_INTERVAL_SECONDS`` (default 604800 = 7 days), plain seconds or
 with an ``s``/``m``/``h``/``d`` suffix (``7d``). ``SCHEDULER_STARTUP_JITTER_SECONDS``
 (default 600) caps the uniform startup delay before the first run.
@@ -36,6 +49,8 @@ from typing import Any, Callable
 log = logging.getLogger("sage.scheduler")
 
 DEFAULT_INTERVAL_SECONDS = 7 * 24 * 3600  # weekly, per §17.6
+#: Monthly cadence for the devdocs_sync compose service (§5.1.1, §17.6).
+DEVDOCS_SYNC_INTERVAL_SECONDS = 30 * 24 * 3600
 DEFAULT_STARTUP_JITTER_SECONDS = 600  # up to 10 minutes
 DEFAULT_BACKOFF_CAP_MULTIPLIER = 8  # backed-off wait never exceeds 8× interval
 
@@ -80,34 +95,6 @@ def parse_interval_seconds(
     return int(value)
 
 
-@dataclass
-class SchedulerConfig:
-    """Resolved scheduler settings."""
-
-    interval_seconds: int = DEFAULT_INTERVAL_SECONDS
-    startup_jitter_seconds: int = DEFAULT_STARTUP_JITTER_SECONDS
-    backoff_cap_multiplier: int = DEFAULT_BACKOFF_CAP_MULTIPLIER
-
-    @classmethod
-    def from_env(cls, env: Any = os.environ) -> "SchedulerConfig":
-        """Build config from env; invalid values raise ValueError."""
-        get = env.get if hasattr(env, "get") else (lambda k, d=None: env[k] if k in env else d)
-        return cls(
-            interval_seconds=parse_interval_seconds(
-                get("REFRESH_INTERVAL_SECONDS"), default=DEFAULT_INTERVAL_SECONDS
-            ),
-            startup_jitter_seconds=parse_interval_seconds(
-                get("SCHEDULER_STARTUP_JITTER_SECONDS"),
-                default=DEFAULT_STARTUP_JITTER_SECONDS,
-                allow_zero=True,
-            ),
-            backoff_cap_multiplier=parse_interval_seconds(
-                get("SCHEDULER_BACKOFF_CAP_MULTIPLIER"),
-                default=DEFAULT_BACKOFF_CAP_MULTIPLIER,
-            ),
-        )
-
-
 def default_refresh() -> list[dict]:
     """Call the crawler's real refresh entrypoint in-process.
 
@@ -121,6 +108,68 @@ def default_refresh() -> list[dict]:
     return refresh_stale()
 
 
+def default_devdocs_sync() -> list[dict]:
+    """Enqueue the monthly DevDocs image sync (§5.1.1).
+
+    Wires to ``services.crawler.jobs.enqueue_devdocs_sync()``, which puts
+    one ``devdocs_sync`` RQ job on the ``sage-crawl`` queue; the
+    crawler-worker runs the pull + diff + ingest. The scheduler never
+    touches docker or the image itself. Imported lazily so importing this
+    module stays stdlib-only.
+    """
+    from services.crawler.jobs import enqueue_devdocs_sync
+
+    job_id = enqueue_devdocs_sync()
+    return [{"job": "devdocs_sync", "rq_job_id": job_id}]
+
+
+#: Job name → zero-arg callable returning the enqueued-jobs list.
+JOB_REFRESHERS: dict[str, Callable[[], list[dict]]] = {
+    "refresh_stale": default_refresh,
+    "devdocs_sync": default_devdocs_sync,
+}
+
+#: Job the scheduler runs unless SCHEDULER_JOB says otherwise.
+DEFAULT_JOB = "refresh_stale"
+
+
+@dataclass
+class SchedulerConfig:
+    """Resolved scheduler settings."""
+
+    interval_seconds: int = DEFAULT_INTERVAL_SECONDS
+    startup_jitter_seconds: int = DEFAULT_STARTUP_JITTER_SECONDS
+    backoff_cap_multiplier: int = DEFAULT_BACKOFF_CAP_MULTIPLIER
+    job: str = DEFAULT_JOB
+
+    @classmethod
+    def from_env(cls, env: Any = os.environ) -> "SchedulerConfig":
+        """Build config from env; invalid values raise ValueError."""
+        get = env.get if hasattr(env, "get") else (lambda k, d=None: env[k] if k in env else d)
+        raw_job = get("SCHEDULER_JOB")
+        job = DEFAULT_JOB if raw_job is None else str(raw_job).strip()
+        if job not in JOB_REFRESHERS:
+            raise ValueError(
+                "invalid SCHEDULER_JOB: %r (expected one of %s)"
+                % (raw_job, sorted(JOB_REFRESHERS))
+            )
+        return cls(
+            interval_seconds=parse_interval_seconds(
+                get("REFRESH_INTERVAL_SECONDS"), default=DEFAULT_INTERVAL_SECONDS
+            ),
+            startup_jitter_seconds=parse_interval_seconds(
+                get("SCHEDULER_STARTUP_JITTER_SECONDS"),
+                default=DEFAULT_STARTUP_JITTER_SECONDS,
+                allow_zero=True,
+            ),
+            backoff_cap_multiplier=parse_interval_seconds(
+                get("SCHEDULER_BACKOFF_CAP_MULTIPLIER"),
+                default=DEFAULT_BACKOFF_CAP_MULTIPLIER,
+            ),
+            job=job,
+        )
+
+
 @dataclass
 class RunResult:
     run_id: str
@@ -131,12 +180,13 @@ class RunResult:
 
 
 class Scheduler:
-    """Runs ``refresh_stale`` on a fixed interval with failure backoff.
+    """Runs the configured job on a fixed interval with failure backoff.
 
     Parameters
     ----------
     refresh: zero-arg callable returning the enqueued-jobs list
-        (defaults to :func:`default_refresh`). Tests inject a mock.
+        (defaults to the :data:`JOB_REFRESHERS` entry for
+        ``config.job``). Tests inject a mock.
     config: :class:`SchedulerConfig` (defaults to :meth:`from_env`).
     clock: object with ``time()`` (injectable for tests).
     sleeper: ``sleep(seconds)`` callable (injectable for tests).
@@ -152,8 +202,8 @@ class Scheduler:
         sleeper: Callable[[float], None] = time.sleep,
         jitter: Callable[[float, float], float] = random.uniform,
     ) -> None:
-        self.refresh = refresh or default_refresh
         self.config = config or SchedulerConfig.from_env()
+        self.refresh = refresh or JOB_REFRESHERS[self.config.job]
         self._clock = clock
         self._sleep = sleeper
         self._jitter = jitter

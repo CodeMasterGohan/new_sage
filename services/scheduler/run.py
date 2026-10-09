@@ -1,9 +1,13 @@
 """Scheduler CLI.
 
-Run one refresh sweep immediately and exit::
+Run one sweep immediately and exit::
 
     python -m scheduler.run --once
     python -m services.scheduler.run --once     # equivalent
+
+Run the monthly DevDocs sync job once instead of the weekly refresh::
+
+    python -m scheduler.run --once --job devdocs_sync
 
 Or run the daemon loop (compose default)::
 
@@ -35,6 +39,7 @@ _BUILD_ROOT = os.path.dirname(_SERVICES_DIR)  # build root
 try:
     from scheduler.scheduler import (  # noqa: E402
         DEFAULT_INTERVAL_SECONDS,
+        JOB_REFRESHERS,
         Scheduler,
         SchedulerConfig,
         parse_interval_seconds,
@@ -45,6 +50,7 @@ except ImportError:
             sys.path.insert(0, _p)
     from scheduler.scheduler import (  # noqa: E402
         DEFAULT_INTERVAL_SECONDS,
+        JOB_REFRESHERS,
         Scheduler,
         SchedulerConfig,
         parse_interval_seconds,
@@ -59,7 +65,7 @@ log = logging.getLogger("sage.scheduler.cli")
 
 
 def build_config(args: argparse.Namespace, env: object = os.environ) -> SchedulerConfig:
-    """Config from env, with the ``--interval-seconds`` CLI override winning.
+    """Config from env, with the CLI overrides winning.
 
     Raises SystemExit(2) with a clear message on invalid values.
     """
@@ -68,6 +74,8 @@ def build_config(args: argparse.Namespace, env: object = os.environ) -> Schedule
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(2) from None
+    if args.job is not None:
+        config.job = args.job  # argparse choices= already validated
     if args.interval_seconds is not None:
         try:
             config.interval_seconds = parse_interval_seconds(
@@ -82,13 +90,20 @@ def build_config(args: argparse.Namespace, env: object = os.environ) -> Schedule
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="scheduler.run",
-        description="New_sage weekly refresh scheduler: runs the crawler's "
-        "refresh_stale() sweep on a fixed interval.",
+        description="New_sage job scheduler: runs the crawler's "
+        "refresh_stale() sweep (default) or the monthly devdocs_sync job "
+        "on a fixed interval.",
     )
     parser.add_argument(
         "--once",
         action="store_true",
         help="run a single sweep now and exit (0 ok / 1 sweep failed)",
+    )
+    parser.add_argument(
+        "--job",
+        choices=sorted(JOB_REFRESHERS),
+        default=None,
+        help="which job to run (default: SCHEDULER_JOB env or refresh_stale)",
     )
     parser.add_argument(
         "--interval-seconds",

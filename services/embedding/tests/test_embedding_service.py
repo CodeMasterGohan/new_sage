@@ -27,11 +27,12 @@ from services.embedding.settings import EmbeddingServiceSettings  # noqa: E402
 
 import services.embedding.main as main_module  # noqa: E402
 
-# sha256 of vendor/ingestion/embeddings.py at port time (2026-10-08).
+# sha256 of vendor/ingestion/embeddings.py (re-pinned 2026-10-09 after the
+# intentional MinIO→RustFS rename; still byte-identical to new_DRUID source).
 # The vendored file is a byte-identical copy of the verified new_DRUID
 # source; this pins that guarantee against accidental edits.
 VENDORED_EMBEDDINGS_SHA256 = (
-    "1c830ef888be97d93b2b083d181089cba3ab8eb26db7a981dc0f4f60f6a83cfd"
+    "df7812d9db152292d9d6d2b540bf4eade93c85757426f110678a94a1a34ef8b0"
 )
 
 
