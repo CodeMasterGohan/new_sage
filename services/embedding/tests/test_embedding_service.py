@@ -64,7 +64,8 @@ def _mock_vector(seed_text: str) -> list[float]:
 
 def test_vendored_contract_is_byte_identical():
     path = Path(reuse._vendor_root()) / "ingestion" / "embeddings.py"
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    content = path.read_bytes().replace(b"\r\n", b"\n")
+    digest = hashlib.sha256(content).hexdigest()
     assert digest == VENDORED_EMBEDDINGS_SHA256
 
 

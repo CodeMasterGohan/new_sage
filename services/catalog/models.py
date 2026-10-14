@@ -46,7 +46,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
 # TEXT[] on PostgreSQL (spec §4), plain JSON elsewhere (SQLite in tests).
-TextArray = ARRAY(Text).with_variant(JSON(), "sqlite")
+TextArray = JSON().with_variant(ARRAY(Text), "postgresql")
 
 
 class Base(DeclarativeBase):

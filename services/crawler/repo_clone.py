@@ -107,7 +107,7 @@ def find_doc_files(checkout: str | Path) -> list[Path]:
             found.append(path)
         elif len(rel_parts) > 1 and rel_parts[0].lower() == "docs":
             found.append(path)
-    return sorted(found)
+    return sorted(found, key=lambda p: p.relative_to(checkout).as_posix())
 
 
 def pages_from_clone(

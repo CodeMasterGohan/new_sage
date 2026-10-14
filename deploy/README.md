@@ -20,7 +20,7 @@ boundary. Do not expose these ports to the public internet.
 | `etcd` | — | — | internal only; required by milvus-standalone |
 
 One network (`sage-net`); persistent data in host bind mounts under
-`/DATA/docker/mounts/<service>` (postgres, redis, rustfs, etcd, milvus,
+`/DATA/docker/mounts/sage/<service>` (postgres, redis, rustfs, etcd, milvus,
 model-artifacts) — no named volumes.
 
 Milvus (`milvusdb/milvus:latest`, CPU) requires the `etcd` sidecar — embedded
@@ -34,14 +34,16 @@ Milvus on first start under the root credentials).
 > live in the 8010/9010/19531 block specifically so they do not collide with
 > new_DRUID's (gateway 8080, vLLM 8000, document_api 8001, mcp 8002,
 > embedding 8003, retrieval 8004, web_ui 8005, minio 9000/9001, milvus
-> 19530/9091). If you still need different ports, remap the `${*_HOST_PORT}`
+> 19530/9091). Persistent data is isolated in `/DATA/docker/mounts/sage/`
+> (preventing collision with new_DRUID's `/DATA/docker/mounts/druid/`).
+> If you still need different ports, remap the `${*_HOST_PORT}`
 > variables in `.env`. Inter-service URLs use the fixed container ports and
 > never need changing.
 
 ## Staging model artifacts
 
 Services are offline-first (spec §14): they load pre-staged artifacts from
-the host bind mount `/DATA/docker/mounts/model-artifacts` (mounted
+the host bind mount `/DATA/docker/mounts/sage/model-artifacts` (mounted
 read-only at `/artifacts` in the embedding/retrieval/ingestion containers)
 and fail startup rather than downloading at runtime (`HF_HUB_OFFLINE=1`,
 `TRANSFORMERS_OFFLINE=1` are set in the stack).
@@ -50,15 +52,15 @@ Stage once before first boot — just copy the checkpoints into the host
 directory:
 
 ```bash
-sudo mkdir -p /DATA/docker/mounts/model-artifacts/{embeddinggemma-2,minilm}
-sudo cp -r /path/to/your/models/embeddinggemma-2/* /DATA/docker/mounts/model-artifacts/embeddinggemma-2/
-sudo cp -r /path/to/your/models/minilm/*           /DATA/docker/mounts/model-artifacts/minilm/
+sudo mkdir -p /DATA/docker/mounts/sage/model-artifacts/{embeddinggemma-2,minilm}
+sudo cp -r /path/to/your/models/embeddinggemma-2/* /DATA/docker/mounts/sage/model-artifacts/embeddinggemma-2/
+sudo cp -r /path/to/your/models/minilm/*           /DATA/docker/mounts/sage/model-artifacts/minilm/
 ```
 
 Expected layout on the host:
 
 ```
-/DATA/docker/mounts/model-artifacts/
+/DATA/docker/mounts/sage/model-artifacts/
   embeddinggemma-2/   # google/embeddinggemma-2 checkpoint, offline loadable
   minilm/             # MiniLM reranker checkpoint + tokenizer
 ```
@@ -68,15 +70,15 @@ the in-container paths (`/artifacts/...`, defaults shown above).
 
 ## Host bind-mount directories
 
-All persistent data lives in bind mounts under `/DATA/docker/mounts/<service>`
+All persistent data lives in bind mounts under `/DATA/docker/mounts/sage/<service>`
 — no named volumes. Docker creates a missing bind-mount directory as **root**,
 so pre-create them and fix ownership for the images that don't run as root:
 
 ```bash
-sudo mkdir -p /DATA/docker/mounts/{postgres,redis,rustfs,etcd,milvus,model-artifacts}
-sudo chown 70:70       /DATA/docker/mounts/postgres   # postgres:16-alpine runs as UID 70
-sudo chown 999:999     /DATA/docker/mounts/redis      # redis:7-alpine runs as UID 999
-sudo chown 10001:10001 /DATA/docker/mounts/rustfs     # rustfs runs as UID 10001
+sudo mkdir -p /DATA/docker/mounts/sage/{postgres,redis,rustfs,etcd,milvus,model-artifacts}
+sudo chown 70:70       /DATA/docker/mounts/sage/postgres   # postgres:16-alpine runs as UID 70
+sudo chown 999:999     /DATA/docker/mounts/sage/redis      # redis:7-alpine runs as UID 999
+sudo chown 10001:10001 /DATA/docker/mounts/sage/rustfs     # rustfs runs as UID 10001
 # etcd and milvus run as root — no chown needed.
 ```
 

@@ -59,10 +59,14 @@ from mcp_server.tools import ServiceDeps
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
-SEED_JSON = Path(
-    "~/workspace/new_sage/build/services/mcp_server/src/mcp_server"
-    "/libraries_seed.json"
-).expanduser()
+SEED_JSON = (
+    HERE.parent
+    / "services"
+    / "mcp_server"
+    / "src"
+    / "mcp_server"
+    / "libraries_seed.json"
+)
 
 # (library_id, [older_version, latest_version]) — ingest order matters:
 # activate_version() flips is_latest on every ingest, so the latest

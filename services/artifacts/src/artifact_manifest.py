@@ -23,7 +23,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import urlparse
 
 import yaml
@@ -175,6 +175,20 @@ def _load_deferral(entry: dict, where: str) -> tuple[bool, str | None]:
     return defer, note
 
 
+def _is_safe_relative_path(p: str) -> bool:
+    p_posix = PurePosixPath(p)
+    p_win = PureWindowsPath(p)
+    if (
+        p_posix.is_absolute()
+        or p_win.is_absolute()
+        or p.startswith(("/", "\\"))
+        or ".." in p_posix.parts
+        or ".." in p_win.parts
+    ):
+        return False
+    return True
+
+
 def _load_manifest_file(entry: dict, i: int, path: Path) -> ManifestFile:
     where = f"{path}: files[{i}]"
     if not isinstance(entry, dict):
@@ -183,7 +197,7 @@ def _load_manifest_file(entry: dict, i: int, path: Path) -> ManifestFile:
     sha256 = _require_str(entry, "sha256", where)
     if not _SHA256_RE.match(sha256):
         raise ManifestError(f"{where}.sha256 must be a 64-char hex digest")
-    if Path(file_path).is_absolute() or ".." in Path(file_path).parts:
+    if not _is_safe_relative_path(file_path):
         raise ManifestError(f"{where}.path must be a relative path without '..'")
     revision = _optional_str(entry, "revision", where)
     defer, note = _load_deferral(entry, where)
@@ -245,7 +259,7 @@ def _load_seed_source(entry: dict, i: int, path: Path) -> SeedSource:
         raise ManifestError(f"{where}: 'license_note' must be a string")
     resolution_command = _require_str(entry, "resolution_command", where)
     stage_dir = _require_str(entry, "stage_dir", where)
-    if Path(stage_dir).is_absolute() or ".." in Path(stage_dir).parts:
+    if not _is_safe_relative_path(stage_dir):
         raise ManifestError(f"{where}: 'stage_dir' must be a relative path without '..'")
     defer, note = _load_deferral(entry, where)
     return SeedSource(

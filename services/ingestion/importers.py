@@ -46,11 +46,11 @@ def import_markdown_files(
     for p in paths:
         p = Path(p)
         if p.is_dir():
-            files.extend(sorted(p.rglob("*.md")))
+            files.extend(sorted(p.rglob("*.md"), key=lambda f: f.as_posix()))
         elif p.is_file():
             files.append(p)
     pages: list[Page] = []
-    for f in sorted(files):
+    for f in sorted(files, key=lambda f: f.as_posix()):
         try:
             text = f.read_text(encoding="utf-8")
         except UnicodeDecodeError:

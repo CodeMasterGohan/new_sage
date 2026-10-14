@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+pip-wheel-metadata/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+build/
+dist/
+*.whl
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Models and data — staged via artifact manifests, never committed
+/artifacts/
+*.bin
+*.safetensors
+*.onnx
+
+# Snapshots / downloads (live in RustFS, not git)
+snapshots/
+downloads/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

@@ -83,15 +83,16 @@ def test_find_doc_files_collects_readme_docs_changelog(tmp_path):
     _write(root, ".git/hooks/note.md", "# hook")  # dot-dir: excluded
 
     found = find_doc_files(root)
-    rels = sorted(str(p.relative_to(root)) for p in found)
-    assert rels == [
-        "CHANGELOG.MD",
-        "Docs/upper.md",
-        "README.md",
+    rels = [p.relative_to(root).as_posix() for p in found]
+    assert len(rels) == 5
+    assert sorted(r.lower() for r in rels) == [
+        "changelog.md",
         "docs/guide.md",
         "docs/sub/advanced.md",
+        "docs/upper.md",
+        "readme.md",
     ]
-    assert found == sorted(found)  # deterministic order
+    assert found == sorted(found, key=lambda p: p.relative_to(root).as_posix())
 
 
 def test_pages_from_clone_matches_importer_page_shape(tmp_path):

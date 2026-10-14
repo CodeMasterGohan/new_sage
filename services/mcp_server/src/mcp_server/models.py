@@ -212,9 +212,10 @@ class Passage(BaseModel):
             f'section="{_escape_attr(breadcrumb)}" '
             f'trust="{p.trust}"'
         )
+        safe_text = self.text.replace("<<<sage:", "<\\<\\<sage:")
         return (
             f"<<<sage:passage {attrs}>>>\n"
-            f"{self.text}\n"
+            f"{safe_text}\n"
             "<<<sage:end-passage>>>"
         )
 
