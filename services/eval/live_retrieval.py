@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 import time
 import urllib.error
@@ -74,6 +75,13 @@ def evaluate(cases: list[dict], retrieve, *, k: int = 5) -> dict:
     failures: list[dict] = []
     for row in cases:
         n += 1
+        # Count all labeled questions, even when retrieval fails.
+        symbol = row.get("expected_symbol")
+        expected_url = row.get("expected_source_url")
+        if symbol:
+            symbol_total += 1
+        if expected_url:
+            source_total += 1
         before = time.perf_counter()
         try:
             resp = retrieve({
@@ -100,15 +108,15 @@ def evaluate(cases: list[dict], retrieve, *, k: int = 5) -> dict:
             total_citations += 1
             if valid_citation_url(str(passage.get("url") or "")):
                 valid_citations += 1
-        symbol = row.get("expected_symbol")
         if symbol:
-            symbol_total += 1
-            if any(symbol.casefold() in str(p.get("text") or "").casefold() for p in passages):
+            pattern = re.compile(
+                rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])",
+                re.IGNORECASE,
+            )
+            if any(pattern.search(str(p.get("text") or "")) for p in passages):
                 symbol_hit += 1
-        url = row.get("expected_source_url")
-        if url:
-            source_total += 1
-            if any(p.get("url") == url for p in passages):
+        if expected_url:
+            if any(p.get("url") == expected_url for p in passages):
                 source_hit += 1
     return {
         "evaluation_type": "live_retrieval_only",
