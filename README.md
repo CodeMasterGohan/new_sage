@@ -65,7 +65,9 @@ schedulers (no crawling by hand):
   devdocs-scheduler ── monthly DevDocs image sync (30d cadence)
 ```
 
-All containers join the pre-existing external **`cora`** Docker network.
+All containers now use Sage's isolated **`sage-net`** Docker network.
+No service joins the external `cora` network by default. The MCP server
+has no application-level authentication and is bound to localhost by default.
 Only **one** host port is published: **8010** (the MCP server). Everything
 else is container-to-container.
 
@@ -73,7 +75,7 @@ else is container-to-container.
 
 ```bash
 cp deploy/.env.example deploy/.env
-docker network create cora    # only if not already present on your host
+docker network create sage-net  # optional: Compose creates it automatically
 
 # 1. Infrastructure + migrations + seed the catalog
 docker compose -f deploy/docker-compose.yml up -d
@@ -93,7 +95,7 @@ Then point your agent at it:
 ```jsonc
 // Claude Code / MCP client config
 { "mcpServers": { "sage": {
-  "url": "http://<h200>:8010/mcp"
+  "url": "http://127.0.0.1:8010/mcp"
   // …or stdio: python -m mcp_server.stdio_adapter
   //   --retrieval-url http://<h200>:8011
 }}}
