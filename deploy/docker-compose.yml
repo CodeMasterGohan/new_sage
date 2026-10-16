@@ -375,5 +375,6 @@ services:
     networks:
     - default
 
-  sage-net:
+networks:
+  default:
     name: sage-net
