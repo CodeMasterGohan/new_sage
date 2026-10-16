@@ -258,6 +258,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
       MILVUS_URI: http://milvus-standalone:19530
       EMBEDDING_URL: http://embedding:8002
+      MINILM_TOKENIZER_PATH: ${MINILM_TOKENIZER_PATH:-/artifacts/minilm}
       RUSTFS_ENDPOINT: rustfs:9000
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
@@ -291,10 +292,15 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
+      EMBEDDING_URL: http://embedding:8002
+      MILVUS_URI: http://milvus-standalone:19530
+      MINILM_TOKENIZER_PATH: ${MINILM_TOKENIZER_PATH:-/artifacts/minilm}
       RUSTFS_ENDPOINT: rustfs:9000
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
       RUSTFS_BUCKET: ${RUSTFS_BUCKET:-sage-snapshots}
+    volumes:
+    - /DATA/docker/mounts/sage/model-artifacts:/artifacts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -303,6 +309,10 @@ services:
       redis:
         condition: service_healthy
       rustfs:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      milvus-standalone:
         condition: service_healthy
     restart: unless-stopped
 
