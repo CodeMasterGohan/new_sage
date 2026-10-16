@@ -14,6 +14,7 @@ from typing import Sequence
 
 from .interfaces import Reranker
 from .models import FusedCandidate
+from .code_search import extract_code_symbols, code_match_strength
 
 # Conservative chars-per-token estimate for the budget guard. Production
 # should enforce the budget with the MiniLM tokenizer; this guard only
@@ -35,6 +36,7 @@ def rerank_candidates(
     query: str,
     candidates: list[FusedCandidate],
     reranker: Reranker,
+    code_symbol_bonus: float = 0.0,
 ) -> list[tuple[FusedCandidate, float]]:
     """Rerank fused candidates with the cross-encoder; (candidate, score)
     sorted descending. Raises ValueError on a score-count mismatch."""
@@ -46,6 +48,12 @@ def rerank_candidates(
         raise ValueError(
             f"reranker returned {len(scores)} scores for {len(candidates)} passages"
         )
+    if code_symbol_bonus > 0:
+        symbols = extract_code_symbols(query)
+        scores = [
+            float(score) + code_symbol_bonus * code_match_strength(symbols, candidate.record)
+            for candidate, score in zip(candidates, scores)
+        ]
     return sorted(zip(candidates, scores), key=lambda pair: pair[1], reverse=True)
 
 
