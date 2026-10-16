@@ -36,6 +36,7 @@ class RetrieveRequest(BaseModel):
     topic: str | None = None
     top_k: int = Field(default=50, ge=1)
     token_budget: int = Field(default=10000, ge=1)
+    diagnostics: bool = False  # internal/operator-only; deployment must gate access
 
 
 def build_service() -> RetrievalService:
@@ -108,6 +109,7 @@ async def retrieve(body: RetrieveRequest):
             topic=body.topic,
             top_k=body.top_k,
             token_budget=body.token_budget,
+            diagnostics=body.diagnostics and os.environ.get("SAGE_RETRIEVAL_DIAGNOSTICS") == "1",
         )
     except UnknownLibraryError as exc:
         log.warning("retrieve: unknown library_id %r", body.library_id)
