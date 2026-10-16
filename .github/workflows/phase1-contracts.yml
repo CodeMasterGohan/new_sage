@@ -27,6 +27,8 @@ jobs:
             services/retrieval/tests/test_retrieval.py \
             services/retrieval/tests/test_code_search.py \
             services/ingestion/tests/test_symbol_index.py \
+            services/ingestion/tests/test_pipeline.py \
+            services/crawler/tests/test_polite_fetch.py \
             services/crawler/tests/test_repo_provenance.py \
             services/eval/tests/test_live_retrieval.py \
             tests-e2e
