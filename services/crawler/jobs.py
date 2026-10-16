@@ -522,7 +522,8 @@ def _crawl_repo(repo, lib, version_row, version, *, run_git, ingest,
         checkout = Path(tmp) / "repo"
         sha = clone_at_tag(lib.repo_url, tag, checkout, run=run_git)
         pages = pages_from_clone(
-            checkout, library_id=lib.name, version=version, source="repoclone"
+            checkout, library_id=lib.name, version=version, source="repoclone",
+            repo_url=lib.repo_url, commit_sha=sha,
         )
     writer = RepoCatalogWriter(repo, version_row.id, make_latest=make_latest)
     # Spec §9.3.1: the clone is reproducible from the tag; the commit SHA

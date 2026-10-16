@@ -568,7 +568,7 @@ def mcp_server(resolver, ingested):
 
 def test_mcp_exact_tool_names(mcp_server):
     tools = asyncio.run(mcp_server.list_tools())
-    assert sorted(t.name for t in tools) == ["get-library-docs", "resolve-library-id"]
+    assert sorted(t.name for t in tools) == ["get-library-docs", "query-docs", "resolve-library-id"]
 
 
 def test_mcp_get_library_docs_provenance(mcp_server):

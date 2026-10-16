@@ -1,13 +1,12 @@
 # New_sage ingestion worker: RQ consumer running pipeline.ingest_pages.
-# CPU-only image. Offline-first: the MiniLM tokenizer is pre-staged into the
-# image at /artifacts/minilm-tokenizer and read via MINILM_TOKENIZER_PATH;
-# the service fails closed if it is missing (never downloads).
+# CPU-only. Offline-first tokenizer is bind-mounted read-only by Compose;
+# clean repository checkouts must never require untracked model artifacts.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HUB_OFFLINE=1 \
-    MINILM_TOKENIZER_PATH=/artifacts/minilm-tokenizer
+    MINILM_TOKENIZER_PATH=/artifacts/minilm
 
 WORKDIR /app
 
@@ -19,8 +18,8 @@ COPY services/__init__.py /app/services/__init__.py
 COPY services/ingestion /app/services/ingestion
 COPY services/catalog /app/services/catalog
 
-# Pre-staged artifacts (MiniLM tokenizer for the production token_len).
-COPY artifacts/minilm-tokenizer /artifacts/minilm-tokenizer
+# The pre-staged MiniLM directory is mounted at /artifacts by Compose.
+# No model weights or tokenizer files are baked into the image.
 
 ENV REDIS_URL="" \
     EMBEDDING_URL="" \

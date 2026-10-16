@@ -60,6 +60,8 @@ class ResolveLibraryIdArgs(BaseModel):
             "multiple ecosystems (e.g. 'pypi', 'npm', 'crates')."
         ),
     )
+    query: str | None = Field(default=None,
+        description="Optional task context for Context7-style resolution.")
 
     @field_validator("libraryName")
     @classmethod
@@ -95,6 +97,8 @@ class GetLibraryDocsArgs(BaseModel):
             "cleanup'). Omit for overview / getting-started pages."
         ),
     )
+    strict_version: bool = Field(default=False,
+        description="Do not serve documentation from a different version.")
     tokens: int = Field(
         default=10000,
         ge=1,

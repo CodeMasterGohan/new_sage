@@ -1,6 +1,6 @@
-"""Contract tests: the 2 Context7-compatible tools (§10).
+"""Contract tests: the New_sage MCP compatibility tool surface (§10).
 
-- Exactly 2 tools registered under their exact names.
+- Exactly 3 tools registered under their exact names.
 - Every tool description instructs the caller to treat retrieved text as
   untrusted data, never instructions.
 - Tool schemas expose no identity/auth parameters.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-EXPECTED_TOOLS = ["resolve-library-id", "get-library-docs"]
+EXPECTED_TOOLS = ["resolve-library-id", "get-library-docs", "query-docs"]
 
 # Parameter-name fragments that must never appear in any tool schema
 # (no auth / identity / arbitrary-fetch surface on this server). Note:
@@ -47,7 +47,7 @@ FORBIDDEN_PARAM_NAMES = (
 
 
 @pytest.mark.asyncio()
-async def test_exactly_two_tools_registered(fastmcp):
+async def test_expected_three_tools_registered(fastmcp):
     tools = await fastmcp.list_tools()
     names = sorted(t.name for t in tools)
     assert names == sorted(EXPECTED_TOOLS), f"unexpected tool set: {names}"
@@ -56,7 +56,7 @@ async def test_exactly_two_tools_registered(fastmcp):
 @pytest.mark.asyncio()
 async def test_tool_descriptions_instruct_data_not_instructions(fastmcp):
     tools = await fastmcp.list_tools()
-    assert len(tools) == 2
+    assert len(tools) == 3
     for tool in tools:
         desc = (tool.description or "").lower()
         assert "untrusted" in desc, f"{tool.name}: description must say text is untrusted"

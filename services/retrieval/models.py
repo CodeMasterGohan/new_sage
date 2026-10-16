@@ -91,11 +91,15 @@ class RetrieveResponse:
     version: str
     version_fallback: bool
     passages: list[Passage] = field(default_factory=list)
+    diagnostics: dict | None = None  # opt-in internal retrieval trace
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "library": dict(self.library),
             "version": self.version,
             "version_fallback": self.version_fallback,
             "passages": [p.to_dict() for p in self.passages],
         }
+        if self.diagnostics is not None:
+            result["diagnostics"] = self.diagnostics
+        return result

@@ -35,6 +35,8 @@ from .clients import (
     RetrievedPassage,
 )
 from .resolver import LibraryResolver
+from .catalog_resolver import CatalogRefreshingResolver
+from .crawl_queue import dispatch_crawl
 from . import tools as tool_impls
 from .models import GetLibraryDocsArgs, ResolveLibraryIdArgs
 
@@ -47,6 +49,9 @@ class Settings:
     resolver_table: str = str(_DEFAULT_SEED)
     allowed_origins: tuple[str, ...] = ()
     dev_fake_clients: bool = False
+    database_url: str = ""
+    resolver_refresh_seconds: int = 60
+    auto_crawl: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,6 +65,9 @@ class Settings:
             resolver_table=os.getenv("SAGE_RESOLVER_TABLE", str(_DEFAULT_SEED)),
             allowed_origins=origins,
             dev_fake_clients=os.getenv("SAGE_MCP_DEV_FAKE_CLIENTS") == "1",
+            database_url=os.getenv("DATABASE_URL", ""),
+            resolver_refresh_seconds=int(os.getenv("SAGE_RESOLVER_REFRESH_SECONDS", "60")),
+            auto_crawl=os.getenv("SAGE_AUTO_CRAWL", "0") == "1",
         )
 
 
@@ -116,9 +124,13 @@ def _register_tools(mcp: FastMCP, deps: tool_impls.ServiceDeps) -> None:
             max_length=64,
             description="Optional ecosystem hint for disambiguation (e.g. 'pypi', 'npm', 'crates').",
         ),
+        query: str | None = Field(
+            default=None, max_length=2000,
+            description="Optional task context for Context7-style clients.",
+        ),
     ) -> dict:
         return await tool_impls.resolve_library_id(
-            deps, ResolveLibraryIdArgs(libraryName=libraryName, ecosystem=ecosystem)
+            deps, ResolveLibraryIdArgs(libraryName=libraryName, ecosystem=ecosystem, query=query)
         )
 
     @mcp.tool(name="get-library-docs")
@@ -137,6 +149,10 @@ def _register_tools(mcp: FastMCP, deps: tool_impls.ServiceDeps) -> None:
             max_length=2000,
             description="Free-text topic to scope retrieval. Omit for overview pages.",
         ),
+        strict_version: bool = Field(
+            default=False,
+            description="Do not serve documentation from a different version.",
+        ),
         tokens: int = Field(
             default=10000,
             ge=1,
@@ -147,13 +163,45 @@ def _register_tools(mcp: FastMCP, deps: tool_impls.ServiceDeps) -> None:
         return await tool_impls.get_library_docs(
             deps,
             GetLibraryDocsArgs(
-                library_id=library_id, version=version, topic=topic, tokens=tokens
+                library_id=library_id, version=version, topic=topic,
+                tokens=tokens, strict_version=strict_version
+            ),
+        )
+
+
+    @mcp.tool(name="query-docs")
+    @_doc(tool_impls.get_library_docs)
+    async def query_docs(
+        libraryId: str = Field(
+            min_length=1, max_length=300,
+            description="Known /owner/repo[/version] or canonical library ID.",
+        ),
+        query: str = Field(
+            min_length=1, max_length=2000,
+            description="Specific documentation question.",
+        ),
+    ) -> dict:
+        record, version = deps.resolver.get_by_context7_id(libraryId)
+        if record is None:
+            return {
+                "library": libraryId,
+                "passages": [],
+                "crawl_recommended": False,
+                "status": "Unknown library ID; call resolve-library-id first.",
+            }
+        return await tool_impls.get_library_docs(
+            deps, GetLibraryDocsArgs(
+                library_id=record.library_id, version=version, topic=query
             ),
         )
 
 
 def _default_deps(settings: Settings) -> tool_impls.ServiceDeps:
-    resolver = LibraryResolver.from_seed_file(settings.resolver_table)
+    resolver = (
+        CatalogRefreshingResolver(settings.database_url, settings.resolver_refresh_seconds)
+        if settings.database_url
+        else LibraryResolver.from_seed_file(settings.resolver_table)
+    )
     if settings.dev_fake_clients:
         retrieval: tool_impls.RetrievalServiceClient = InMemoryRetrievalClient(
             [
@@ -166,7 +214,11 @@ def _default_deps(settings: Settings) -> tool_impls.ServiceDeps:
         )
     else:
         retrieval = HttpRetrievalServiceClient(settings.retrieval_url)
-    return tool_impls.ServiceDeps(resolver=resolver, retrieval=retrieval)
+    return tool_impls.ServiceDeps(
+        resolver=resolver,
+        retrieval=retrieval,
+        crawl_dispatcher=dispatch_crawl if settings.auto_crawl else None,
+    )
 
 
 def create_app(
