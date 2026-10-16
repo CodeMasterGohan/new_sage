@@ -488,6 +488,9 @@ class DocChunker:
             headings=list(section.breadcrumb),
             code_language=langs[0] if langs else ("code" if has_code else None),
             oversized_code=oversized_code,
-            identifiers=extract_code_identifiers(text) if has_code else [],
+            # Index API identifiers from headings and prose references too.
+            identifiers=extract_code_identifiers(
+                " ".join(section.breadcrumb) + "\n" + text
+            ),
         )
         return chunk
