@@ -156,7 +156,7 @@ def test_resolve_version_falls_back_to_latest(monkeypatch, cat):
 
 
 def test_resolve_version_none_requests_latest(monkeypatch, cat):
-    _install_fake_psycopg(
+    conns = _install_fake_psycopg(
         monkeypatch,
         script=[
             (FAKE_UUID, "react", "npm", []),
@@ -165,7 +165,8 @@ def test_resolve_version_none_requests_latest(monkeypatch, cat):
     )
     resolved = cat.resolve_version("react", None)
     assert resolved.version == "19.2.0"
-    assert resolved.fallback is True
+    assert resolved.fallback is False
+    assert "status = 'ready'" in conns[1].cursor_obj.executed[0][0]
 
 
 def test_resolve_version_unknown_library_raises(monkeypatch, cat):
