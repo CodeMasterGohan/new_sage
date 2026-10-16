@@ -14,7 +14,8 @@ from services.ingestion.pipeline import (
     ingest_pages,
 )
 
-from conftest import word_len
+def word_len(text: str) -> int:
+    return len(text.split())
 
 DIM = EMBEDDING_DIMENSION
 
