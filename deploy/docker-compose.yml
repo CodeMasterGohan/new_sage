@@ -246,7 +246,6 @@ services:
 
     networks:
     - default
-    - cora
   ingestion-worker:
     # RQ worker: no published ports. The ingestion agent owns this service's
     # Dockerfile and worker entrypoint; this is the compose wiring.
@@ -376,9 +375,5 @@ services:
     networks:
     - default
 
-networks:
-  cora:
-    name: cora
-    external: true
   sage-net:
     name: sage-net
