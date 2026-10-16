@@ -75,7 +75,7 @@ else is container-to-container.
 
 ```bash
 cp deploy/.env.example deploy/.env
-docker network create sage-net  # optional: Compose creates it automatically
+# Compose creates sage-net automatically; no shared network is required.
 
 # 1. Infrastructure + migrations + seed the catalog
 docker compose -f deploy/docker-compose.yml up -d
