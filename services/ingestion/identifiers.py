@@ -23,7 +23,7 @@ _DEF_RE = re.compile(
     re.MULTILINE,
 )
 _CONST_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,63})\b")
-_METHOD_RE = re.compile(r"(?:\\.|::|#)([A-Za-z_][A-Za-z0-9_]{1,63})")
+_METHOD_RE = re.compile(r"(?:\.|::|#)([A-Za-z_][A-Za-z0-9_]{1,63})")
 _BACKTICK_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_.:]{1,127})`")
 _SNAKE_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+)\b")
 
