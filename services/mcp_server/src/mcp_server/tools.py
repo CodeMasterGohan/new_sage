@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from .clients import RetrievalError, RetrievalServiceClient
 from .models import (
@@ -49,6 +50,7 @@ _RETRIEVAL_TOP_K = 50
 class ServiceDeps:
     resolver: LibraryResolver
     retrieval: RetrievalServiceClient
+    crawl_dispatcher: Callable[[str, str], str] | None = None
 
 
 def _approx_tokens(text: str) -> int:
@@ -86,7 +88,15 @@ async def resolve_library_id(deps: ServiceDeps, args: ResolveLibraryIdArgs) -> d
             args.libraryName,
             [a.library_id for a in result.alternatives],
         )
-    return result.model_dump(exclude_none=True)
+    out = result.model_dump(exclude_none=True)
+    if result.found and result.library_id:
+        record = deps.resolver.get(result.library_id)
+        if record and record.repo_url:
+            from urllib.parse import urlsplit
+            path = urlsplit(record.repo_url).path.strip("/").removesuffix(".git")
+            if len(path.split("/")) == 2:
+                out["context7_library_id"] = "/" + path
+    return out
 
 
 async def get_library_docs(deps: ServiceDeps, args: GetLibraryDocsArgs) -> dict:
@@ -161,6 +171,33 @@ async def get_library_docs(deps: ServiceDeps, args: GetLibraryDocsArgs) -> dict:
             retrieved.version,
         )
 
+    # Enqueue only registered libraries with explicitly missing pinned versions.
+    # Failure to enqueue should not hide already indexed search results.
+    crawl_status = None
+    if args.version and retrieved.version_fallback and deps.crawl_dispatcher:
+        try:
+            job_id = deps.crawl_dispatcher(record.library_id, args.version)
+            crawl_status = f"requested-version crawl: {job_id}"
+        except Exception as exc:
+            log.warning("on-demand crawl queue failed: %s", exc)
+            crawl_status = "requested-version crawl queue unavailable"
+
+    if args.strict_version and args.version and (
+        retrieved.version_fallback or retrieved.version != args.version
+    ):
+        return {
+            "library": record.name,
+            "version": retrieved.version,
+            "version_fallback": True,
+            "crawl_recommended": True,
+            "status": (
+                f"requested version {args.version!r} is not indexed; "
+                "strict_version prevents serving an incompatible version"
+                + (f"; {crawl_status}" if crawl_status else "")
+            ),
+            "passages": [],
+        }
+
     # Client-side token-budget enforcement (defense in depth; the retrieval
     # service was asked for the same budget).
     passages: list[Passage] = []
@@ -199,6 +236,8 @@ async def get_library_docs(deps: ServiceDeps, args: GetLibraryDocsArgs) -> dict:
             f"requested version '{args.version}' resolved to indexed version "
             f"'{retrieved.version}'"
         )
+    if crawl_status:
+        status_parts.append(crawl_status)
     if truncated:
         status_parts.append(
             f"passage list truncated to the {args.tokens}-token budget"
