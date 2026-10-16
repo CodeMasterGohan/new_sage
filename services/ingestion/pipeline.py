@@ -218,7 +218,12 @@ class MilvusVectorStore(VectorStore):
             return 0
         client = self._connect()
         res = client.upsert(collection_name=self.collection_name, data=records)
-        return res.get("upsert_count", len(records))
+        count = res.get("upsert_count", res.get("insert_count"))
+        if count is None or int(count) != len(records):
+            raise RuntimeError(
+                f"Milvus did not confirm every upsert: {count!r} of {len(records)}"
+            )
+        return int(count)
 
     def delete_version(self, library_id: str, version: str) -> int:
         client = self._connect()
@@ -286,8 +291,7 @@ class CatalogWriter(abc.ABC):
 class NullCatalogWriter(CatalogWriter):
     """Honest no-op: used when the sibling catalog is not yet wired.
 
-    Ingestion still indexes into Milvus; catalog rows are skipped with a
-    warning in the report. Never silently pretends to have written.
+    Test-only fake. Production ingestion never falls back to this writer.
     """
 
     def __init__(self) -> None:
@@ -327,8 +331,7 @@ def load_catalog_writer(**kwargs) -> CatalogWriter:
     ``make_catalog_writer() -> CatalogWriter`` (implemented in Wave 2 as
     ``services/catalog/writer.py``). Raises a clear error naming the
     contract when the sibling package is missing or ``DATABASE_URL`` is
-    unset — the pipeline falls back to :class:`NullCatalogWriter` in that
-    case (with a warning in the report), never failing the ingest.
+    unset. Such failures propagate: no production success without a catalog.
     """
     try:
         from services.catalog import make_catalog_writer  # type: ignore
@@ -386,19 +389,9 @@ def ingest_pages(
 
     vector_store = vector_store or MilvusVectorStore()
     if catalog is None:
-        # Wave 2: prefer the real catalog writer when the sibling package
-        # is importable and DATABASE_URL is set (the RQ worker resolves it
-        # in-process — writers hold an engine and are not RQ-serializable).
-        # Falls back to the honest no-op with a warning otherwise.
-        try:
-            catalog = load_catalog_writer(default_source=source)
-        except Exception as exc:  # noqa: BLE001 — any wiring failure -> Null
-            log.warning("catalog writer unavailable (%s): recording in-memory only", exc)
-            catalog = NullCatalogWriter()
-    if isinstance(catalog, NullCatalogWriter):
-        report.warnings.append(
-            "catalog writer not wired: page/chunk rows recorded in-memory only"
-        )
+        # Never report success with only Milvus vectors and no Postgres catalog.
+        # Tests may explicitly inject a NullCatalogWriter; workers cannot.
+        catalog = load_catalog_writer(default_source=source)
 
     # --- dedup against previous version (§6) ---------------------------
     prev_hashes: set[str] = set()
@@ -452,7 +445,15 @@ def ingest_pages(
     # --- index ------------------------------------------------------------
     records = [c.to_milvus_record() for c in all_chunks]
     report.chunks_indexed = vector_store.upsert(records)
-    catalog.insert_chunks(all_chunks)
+    if report.chunks_indexed != len(records):
+        raise RuntimeError(
+            f"Milvus indexed {report.chunks_indexed} of {len(records)} chunks"
+        )
+    inserted = catalog.insert_chunks(all_chunks)
+    if inserted != len(all_chunks):
+        raise RuntimeError(
+            f"catalog recorded {inserted} of {len(all_chunks)} chunks"
+        )
     report.oversized_code_chunks = sum(1 for c in all_chunks if c.oversized_code)
     if report.oversized_code_chunks:
         report.warnings.append(
