@@ -48,6 +48,10 @@ PostgreSQL, Redis, model weights, or container networking.
 - Check that PostgreSQL/Milvus/RustFS/Redis remain accessible to the
   corresponding services on the private Compose network while backend
   services have no `cora` network membership.
+- Verify clean-checkout ingestion image build and mount the offline MiniLM
+  tokenizer at /artifacts/minilm for BOTH ingestion-worker and crawler-worker.
+- Verify no crawler job uses a null catalog writer or reports partial Milvus
+  upserts as successful.
 - Check model load, source citations, response quality, p95 query latency,
   and restart/recovery behavior before deployment.
 
