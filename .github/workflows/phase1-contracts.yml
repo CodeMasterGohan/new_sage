@@ -36,3 +36,11 @@ jobs:
         run: |
           cp deploy/.env.example deploy/.env
           docker compose -f deploy/docker-compose.yml config --quiet
+  clean-image-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ingestion worker from tracked repository files
+        run: docker build --file services/ingestion/Dockerfile --tag sage-ingestion:ci .
+      - name: Build crawler worker from tracked repository files
+        run: docker build --file services/crawler/Dockerfile --tag sage-crawler:ci .
