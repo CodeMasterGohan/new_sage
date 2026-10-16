@@ -22,7 +22,14 @@ jobs:
           PYTHONPATH: .:services/mcp_server/src
         run: |
           python -m compileall -q services tests-e2e
-          pytest -q services/mcp_server/tests services/retrieval/tests/test_catalog_sql.py tests-e2e
+          pytest -q services/mcp_server/tests \
+            services/retrieval/tests/test_catalog_sql.py \
+            services/retrieval/tests/test_retrieval.py \
+            services/retrieval/tests/test_code_search.py \
+            services/ingestion/tests/test_symbol_index.py \
+            services/crawler/tests/test_repo_provenance.py \
+            services/eval/tests/test_live_retrieval.py \
+            tests-e2e
       - name: Validate Docker Compose configuration
         run: |
           cp deploy/.env.example deploy/.env
