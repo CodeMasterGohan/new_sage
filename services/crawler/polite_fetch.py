@@ -13,10 +13,12 @@ so throttle/backoff tests run instantly.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
 log = logging.getLogger("sage.crawler.fetch")
@@ -79,46 +81,79 @@ class PoliteFetcher:
     # ------------------------------------------------------------------
     # public
     # ------------------------------------------------------------------
-    def fetch(self, url: str) -> tuple[str, str]:
-        """Fetch ``url`` politely. Returns ``(html, final_url)``.
+    def _validate_destination(self, url: str) -> None:
+        """Reject local/private destinations before every HTTP request or hop.
 
-        Raises :class:`RobotsDisallowed` when robots.txt disallows the
-        URL, :class:`FetchError` when the host keeps failing.
+        Production resolves DNS for an additional SSRF check. An outbound
+        firewall is still required to prevent DNS rebinding and proxy bypass.
         """
-        parsed = urlsplit(url)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            raise FetchError(f"refusing to fetch non-HTTP(S) URL: {url!r}")
-        if not self._robots_allows(url):
-            raise RobotsDisallowed(f"robots.txt disallows {url}")
+        try:
+            parsed = urlsplit(url)
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError as exc:
+            raise FetchError("invalid URL destination") from exc
+        if (parsed.scheme not in ("http", "https") or not host
+                or parsed.username or parsed.password or port == 0):
+            raise FetchError(f"refusing unsafe crawl URL: {url!r}")
+        if host.lower().rstrip(".") in {"localhost", "metadata.google.internal"} or host.lower().endswith((".local", ".internal", ".localhost")):
+            raise FetchError(f"refusing local crawl host: {host}")
+        try:
+            addr = ipaddress.ip_address(host)
+            if not addr.is_global:
+                raise FetchError(f"refusing nonpublic crawl address: {host}")
+        except ValueError:
+            pass
+        # Fakes should not perform DNS/network calls; real HTTP must do so.
+        if self._http_get is _default_http_get:
+            try:
+                addresses = socket.getaddrinfo(host, port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+            except OSError as exc:
+                raise FetchError(f"crawl DNS lookup failed for {host}: {exc}") from exc
+            if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+                raise FetchError(f"crawl destination resolves to nonpublic address: {host}")
 
+    def fetch(self, url: str) -> tuple[str, str]:
+        """Fetch with URL validation on each manual redirect hop."""
+        self._validate_destination(url)
         headers = {"User-Agent": self.user_agent}
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
-            self._throttle(parsed.netloc)
+            current = url
             try:
-                resp = self._http_get(
-                    url, headers=headers, timeout=self.timeout,
-                    allow_redirects=True,
-                )
-            except Exception as exc:  # network-level failure: retryable
-                last_error = exc
-                log.warning("fetch %s failed (attempt %d): %s", url, attempt, exc)
-            else:
-                status = resp.status_code
-                if status == 200:
-                    return resp.text, resp.url
-                if status in RETRYABLE_STATUSES and attempt < self.max_retries:
-                    wait = self._retry_wait(resp, attempt)
-                    log.warning(
-                        "fetch %s -> %s, backing off %.1fs (attempt %d)",
-                        url, status, wait, attempt,
+                for redirects in range(6):
+                    self._validate_destination(current)
+                    if not self._robots_allows(current):
+                        raise RobotsDisallowed(f"robots.txt disallows {current}")
+                    self._throttle(urlsplit(current).netloc)
+                    resp = self._http_get(
+                        current, headers=headers, timeout=self.timeout,
+                        allow_redirects=False,
                     )
-                    self._sleep(wait)
-                    continue
-                raise FetchError(f"fetch {url} -> HTTP {status}")
-            if attempt < self.max_retries:
-                wait = min(self.backoff_base * (2**attempt), self.backoff_cap)
-                self._sleep(wait)
+                    status = resp.status_code
+                    if status in (301, 302, 303, 307, 308):
+                        location = resp.headers.get("Location") or resp.headers.get("location")
+                        if not location or redirects == 5:
+                            raise FetchError("crawl redirects exceeded or lacked Location")
+                        current = urljoin(current, location)
+                        continue
+                    if status == 200:
+                        final = resp.url or current
+                        self._validate_destination(final)
+                        return resp.text, final
+                    if status in RETRYABLE_STATUSES and attempt < self.max_retries:
+                        wait = self._retry_wait(resp, attempt)
+                        log.warning("fetch %s -> %s, backing off %.1fs", current, status, wait)
+                        self._sleep(wait)
+                        break
+                    raise FetchError(f"fetch {current} -> HTTP {status}")
+            except (FetchError, RobotsDisallowed):
+                raise
+            except Exception as exc:
+                last_error = exc
+                log.warning("fetch %s failed (attempt %d): %s", current, attempt, exc)
+                if attempt < self.max_retries:
+                    self._sleep(min(self.backoff_base * (2 ** attempt), self.backoff_cap))
         raise FetchError(f"fetch {url} failed after {self.max_retries + 1} attempts: {last_error}")
 
     # ------------------------------------------------------------------
@@ -171,7 +206,7 @@ class PoliteFetcher:
                 robots_url,
                 headers={"User-Agent": self.user_agent},
                 timeout=ROBOTS_TIMEOUT,
-                allow_redirects=True,
+                allow_redirects=False,
             )
         except Exception as exc:
             log.warning("robots.txt fetch failed for %s: %s", robots_url, exc)
