@@ -57,3 +57,30 @@ def test_loading_fails_on_missing_fields(tmp_path):
     file.write_text('{"library_id":"react"}\n')
     with pytest.raises(ValueError, match="version"):
         load_cases(file)
+
+
+def test_failed_labeled_query_is_counted_as_quality_miss():
+    cases = [
+        {"library_id": "react", "version": "19.2.0",
+         "topic": "useEffect()", "expected_symbol": "useEffect",
+         "expected_source_url": "https://react.dev/reference/react/useEffect"},
+    ]
+    def offline(_):
+        raise ConnectionError("unreachable")
+    report = evaluate(cases, offline)
+    assert report["expected_symbol_cases"] == 1
+    assert report["expected_source_cases"] == 1
+    assert report["expected_symbol_hit_at_k"] == 0.0
+    assert report["expected_source_hit_at_k"] == 0.0
+    assert report["version_accuracy"] == 0.0
+
+
+def test_symbol_boundary_does_not_match_plural_only():
+    cases = [{"library_id": "pkg", "version": "1", "topic": "aws_instance",
+              "expected_symbol": "aws_instance"}]
+    report = evaluate(cases, lambda _: {
+        "version": "1",
+        "passages": [{"text": "Only aws_instances_plural is mentioned",
+                      "url": "https://example.org/docs"}],
+    })
+    assert report["expected_symbol_hit_at_k"] == 0.0
