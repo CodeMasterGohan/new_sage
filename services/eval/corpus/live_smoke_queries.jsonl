@@ -1,0 +1,10 @@
+{"id":"react-hooks","library_id":"react","version":"19.2.0","topic":"How does useEffect() cleanup work?","expected_symbol":"useEffect"}
+{"id":"react-state","library_id":"react","version":"18.3.1","topic":"How to use useState()?","expected_symbol":"useState"}
+{"id":"fastapi-dependency","library_id":"fastapi","version":"0.116.1","topic":"Explain Depends() dependency injection","expected_symbol":"Depends"}
+{"id":"django-model","library_id":"django","version":"5.2.6","topic":"What does models.ForeignKey do?","expected_symbol":"ForeignKey"}
+{"id":"pandas-dataframe","library_id":"pandas","version":"2.3.1","topic":"DataFrame.merge() join options","expected_symbol":"merge"}
+{"id":"numpy-array","library_id":"numpy","version":"2.3.1","topic":"numpy.asarray() dtype support","expected_symbol":"asarray"}
+{"id":"redis-stream","library_id":"redis","version":"8.2.1","topic":"How is XREADGROUP used?","expected_symbol":"XREADGROUP"}
+{"id":"typescript-mapped","library_id":"typescript","version":"5.9.2","topic":"What is Pick<T,K> in TypeScript?","expected_symbol":"Pick"}
+{"id":"postgres-json","library_id":"postgres","version":"18.0","topic":"How does jsonb_set() work?","expected_symbol":"jsonb_set"}
+{"id":"go-context","library_id":"go","version":"1.25.1","topic":"How to call context.WithCancel()?","expected_symbol":"WithCancel"}
