@@ -14,6 +14,7 @@ from .config import RetrievalConfig
 from .errors import DependencyError, UnknownLibraryError, VersionResolutionError
 from .fusion import apply_identifier_boost, reciprocal_rank_fusion
 from .identifiers import extract_identifier_tokens, library_name_mentions
+from .code_search import extract_code_symbols, code_match_strength
 from .interfaces import (
     EmbeddingClient,
     LibraryCatalog,
@@ -72,6 +73,7 @@ class RetrievalService:
         top_k: int = 50,
         token_budget: int = 10000,
         task_hint: str | None = None,
+        diagnostics: bool = False,
     ) -> RetrieveResponse:
         """Execute the §9 retrieval sequence. Fails closed on bad input or
         any collaborator failure."""
@@ -115,6 +117,7 @@ class RetrievalService:
         # 2. ONE version predicate, applied identically to every branch.
         predicate = VersionPredicate(library_id=library_id, version_id=resolved.version_id)
 
+        catalog_done = time.monotonic()
         library_info = {
             "library_id": library.library_id,
             "name": library.name,
@@ -140,6 +143,11 @@ class RetrievalService:
                 version=resolved.version,
                 version_fallback=resolved.fallback,
                 passages=passages,
+                diagnostics=(
+                    {"mode": "overview", "version_id": resolved.version_id,
+                     "timings_ms": {"total": round((time.monotonic() - started) * 1000, 2)},
+                     "returned_count": len(passages)} if diagnostics else None
+                ),
             )
 
         # 4. Query embedding (task string sent; prompts applied server-side).
@@ -158,6 +166,7 @@ class RetrievalService:
                 f"{cfg.embedding_dimension}; refusing to mix contracts (§8)"
             )
 
+        embedding_done = time.monotonic()
         # 5-7. Dense / BM25 / identifier retrieval — SAME predicate.
         try:
             dense_hits = self._store.dense_search(
@@ -170,6 +179,10 @@ class RetrievalService:
             id_tokens += [
                 t for t in extract_identifier_tokens(topic) if t not in id_tokens
             ]
+            id_tokens += [
+                t for t in extract_code_symbols(topic)
+                if t.casefold() not in {x.casefold() for x in id_tokens}
+            ]
             identifier_hits = (
                 self._store.identifier_search(
                     id_tokens, predicate, cfg.identifier_candidates
@@ -180,6 +193,7 @@ class RetrievalService:
         except Exception as exc:
             raise DependencyError(f"vector store query failed: {exc}") from exc
 
+        retrieval_done = time.monotonic()
         # 8. Deduplicate + RRF fusion; identifier hits merged with fixed boost.
         fused = reciprocal_rank_fusion(
             {"dense": dense_hits, "bm25": bm25_hits}, k=cfg.rrf_k
@@ -189,9 +203,13 @@ class RetrievalService:
 
         # 9. MiniLM rerank over the top-50 shortlist (CPU).
         try:
-            reranked = rerank_candidates(topic, shortlist, self._reranker)
+            reranked = rerank_candidates(
+                topic, shortlist, self._reranker,
+                code_symbol_bonus=cfg.code_symbol_bonus,
+            )
         except Exception as exc:
             raise DependencyError(f"rerank failed: {exc}") from exc
+        rerank_done = time.monotonic()
         finalists = reranked[:top_k]
 
         # 10. Render passages and enforce the token budget.
@@ -209,11 +227,57 @@ class RetrievalService:
             resolved.fallback,
             time.monotonic() - started,
         )
+        trace = None
+        if diagnostics:
+            symbols = extract_code_symbols(topic)
+            ranks = {
+                branch: {hit.record.chunk_id: rank for rank, hit in enumerate(hits, 1)}
+                for branch, hits in (
+                    ("dense", dense_hits), ("bm25", bm25_hits),
+                    ("identifier", identifier_hits),
+                )
+            }
+            trace = {
+                "mode": "hybrid",
+                "version_id": resolved.version_id,
+                "version_fallback": resolved.fallback,
+                "symbols": symbols,
+                "candidate_counts": {
+                    "dense": len(dense_hits),
+                    "bm25": len(bm25_hits),
+                    "identifier": len(identifier_hits),
+                    "fused": len(fused),
+                    "reranked": len(reranked),
+                    "returned": len(passages),
+                },
+                "timings_ms": {
+                    "catalog": round((catalog_done - started) * 1000, 2),
+                    "embedding": round((embedding_done - catalog_done) * 1000, 2),
+                    "candidate_search": round((retrieval_done - embedding_done) * 1000, 2),
+                    "reranking": round((rerank_done - retrieval_done) * 1000, 2),
+                    "total": round((time.monotonic() - started) * 1000, 2),
+                },
+                "top_hits": [
+                    {
+                        "chunk_id": candidate.record.chunk_id,
+                        "ranks": {
+                            name: branch_ranks.get(candidate.record.chunk_id)
+                            for name, branch_ranks in ranks.items()
+                        },
+                        "branches": list(candidate.branches),
+                        "fusion_score": round(candidate.fusion_score, 6),
+                        "rerank_score": round(score, 6),
+                        "symbol_match": code_match_strength(symbols, candidate.record),
+                    }
+                    for candidate, score in reranked[: min(20, top_k)]
+                ],
+            }
         return RetrieveResponse(
             library=library_info,
             version=resolved.version,
             version_fallback=resolved.fallback,
             passages=passages,
+            diagnostics=trace,
         )
 
     # ------------------------------------------------------------------
