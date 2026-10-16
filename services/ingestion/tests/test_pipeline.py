@@ -208,7 +208,7 @@ def test_missing_catalog_writer_fails_instead_of_reporting_success(monkeypatch):
     store = FakeVectorStore()
     with pytest.raises(RuntimeError, match="catalog unavailable"):
         ingest_pages(
-            "fakelib", "1.0.0", [_page("# Guide\\nTest text")], "crawl",
+            "fakelib", "1.0.0", [_page("# Guide\nTest text")], "crawl",
             embedding_client=FakeEmbedding(), vector_store=store,
             token_len=word_len, chunker_settings=_settings(),
         )
@@ -222,7 +222,7 @@ def test_partial_vector_index_fails_before_catalog_activation():
     cat = NullCatalogWriter()
     with pytest.raises(RuntimeError, match="Milvus indexed"):
         ingest_pages(
-            "fakelib", "1.0.0", [_page("# Guide\\nTest text")], "crawl",
+            "fakelib", "1.0.0", [_page("# Guide\nTest text")], "crawl",
             embedding_client=FakeEmbedding(), vector_store=IncompleteStore(),
             catalog=cat, token_len=word_len, chunker_settings=_settings(),
         )
