@@ -151,7 +151,7 @@ runtime, no unapproved endpoints. Object storage is **RustFS**
 The [Rust Markdown fast path](docs/rust-fastpath.md) offers optional,
 Python-compatible heading/fenced-code section scanning and whitespace
 normalization after Python HTML extraction. Initial CI microbenchmarks
-showed approximately **3× faster section parsing** and **5.6× faster
+showed approximately **2.6× faster section parsing** and **4.9× faster
 normalization** on synthetic long Markdown. It does **not** change
 robots.txt, crawling rate, text token budgets, embedding, or search.
 
