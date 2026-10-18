@@ -44,3 +44,25 @@ jobs:
         run: docker build --file services/ingestion/Dockerfile --tag sage-ingestion:ci .
       - name: Build crawler worker from tracked repository files
         run: docker build --file services/crawler/Dockerfile --tag sage-crawler:ci .
+
+  rust-markdown-fastpath:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust wheel builder and tests
+        run: |
+          python -m pip install "maturin>=1.7,<2" pytest==9.1.1 trafilatura==2.3.1
+      - name: Build native PyO3 wheel from source
+        run: |
+          maturin build --release --interpreter python --manifest-path rust/markdown_fastpath/Cargo.toml --out /tmp/sage-wheels
+          python -m pip install /tmp/sage-wheels/*.whl
+      - name: Verify Rust and Python output parity and benchmark
+        env:
+          SAGE_RUST_FASTPATH: "1"
+          PYTHONPATH: .
+        run: |
+          python -m pytest -q -s services/ingestion/tests/test_rust_markdown_fastpath.py
