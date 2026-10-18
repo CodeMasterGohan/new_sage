@@ -97,6 +97,20 @@ class _Section:
 
 def _parse_sections(markdown: str) -> list[_Section]:
     """Split markdown into sections on H1/H2/H3; collect prose/code units."""
+    if (os.getenv("SAGE_RUST_FASTPATH", "0") == "1"
+            and not any(ch in markdown for ch in ("\x85", "\u2028", "\u2029", "\x1c", "\x1d", "\x1e", "\x0b", "\x0c"))
+            and "\r" not in markdown.replace("\r\n", "")):
+        from sage_markdown_fastpath import parse_sections
+
+        return [
+            _Section(
+                breadcrumb=breadcrumb,
+                units=[_Unit(kind=kind, text=text, lang=lang)
+                       for kind, text, lang in units],
+            )
+            for breadcrumb, units in parse_sections(markdown)
+        ]
+
     sections: list[_Section] = []
     stack: list[tuple[int, str]] = []  # (level, title)
 
