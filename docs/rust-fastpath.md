@@ -18,15 +18,15 @@ The Rust source is `rust/markdown_fastpath/`.
 
 ### Benchmark (illustrative, not end-to-end)
 
-GitHub Actions CPython 3.12, Linux x86_64 (Run
-[39092645703](https://github.com/CodeMasterGohan/new_sage/actions/runs/39092645703)):
+GitHub Actions **CPython 3.11 (matching production Docker images)**, Linux x86_64 (Run
+[39092915763](https://github.com/CodeMasterGohan/new_sage/actions/runs/39092915763)):
 
 | Microbenchmark | Python median | Rust median | Gain |
 | --- | ---: | ---: | ---: |
-| Markdown section parser, ~1,600 sections | 11.038 ms | 3.701 ms | 2.98× |
-| Markdown whitespace/blank-line normalization | 0.847 ms | 0.150 ms | 5.65× |
+| Markdown section parser, ~1,600 sections | 8.802 ms | 3.372 ms | **2.61×** |
+| Markdown whitespace/blank-line normalization | 0.774 ms | 0.158 ms | **4.90×** |
 
-Native wheel compiled and passed all 18 sample/parity tests (headings,
+The [CI-built CPython 3.11 wheel](https://github.com/CodeMasterGohan/new_sage/actions/runs/39092915763/artifacts/12123441963) is retained as a run artifact for staging. Native wheel compiled and passed all 18 sample/parity tests (headings,
 fenced code, CRLF, Unicode, synthetic 250-section corpus). This is not a
 promise of matching end-to-end ingestion improvement: crawling is limited
 by remote HTTP latency, robots.txt and the intentional one-request/second
