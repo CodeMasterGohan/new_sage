@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Rust wheel builder and tests
         run: |
@@ -60,6 +60,12 @@ jobs:
         run: |
           maturin build --release --interpreter python --manifest-path rust/markdown_fastpath/Cargo.toml --out /tmp/sage-wheels
           python -m pip install /tmp/sage-wheels/*.whl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sage-markdown-fastpath-cp311-linux-wheel
+          path: /tmp/sage-wheels/*.whl
+          if-no-files-found: error
+          retention-days: 14
       - name: Verify Rust and Python output parity and benchmark
         env:
           SAGE_RUST_FASTPATH: "1"
