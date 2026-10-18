@@ -1,0 +1,23 @@
+# GitLab CI overlay: immutable images, with optional accelerated workers.
+# Defaults to Python worker images. RUST_WORKER_TAG_SUFFIX=-rust selects
+# separately built/tested wheels in ingestion and crawler images.
+# Only set this in an explicitly approved performance staging deployment.
+services:
+  catalog-migrate:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/catalog:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  milvus_setup:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/milvus_setup:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  embedding:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/embedding:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  retrieval:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/retrieval:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  mcp-server:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/mcp_server:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  ingestion-worker:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/ingestion:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}${RUST_WORKER_TAG_SUFFIX:-}
+  crawler-worker:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/crawler:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}${RUST_WORKER_TAG_SUFFIX:-}
+  scheduler:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/scheduler:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
+  devdocs-scheduler:
+    image: ${CI_IMAGE_PREFIX:?Set CI_IMAGE_PREFIX}/scheduler:${CI_IMAGE_TAG:?Set CI_IMAGE_TAG}
