@@ -116,6 +116,8 @@ def pages_from_clone(
     library_id: str,
     version: str,
     source: str = "repoclone",
+    repo_url: str | None = None,
+    commit_sha: str | None = None,
 ) -> list:
     """Build ingestion ``Page`` objects from a checkout.
 
@@ -134,6 +136,32 @@ def pages_from_clone(
     files = find_doc_files(checkout)
     if not files:
         log.warning("no doc files found in %s", checkout)
-    return import_markdown_files(
+    pages = import_markdown_files(
         files, library_id=library_id, version=version, source=source
     )
+    # Clone-local paths are ephemeral and cannot serve as citations.
+    # Use the exact immutable checkout SHA for verifiable source URLs.
+    if repo_url and commit_sha:
+        from urllib.parse import quote, urlsplit
+        import re
+
+        u = urlsplit(repo_url)
+        repository = u.path.strip("/").removesuffix(".git")
+        valid_repo = re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
+        valid_sha = re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha)
+        if u.scheme == "https" and valid_repo and valid_sha:
+            if u.hostname == "github.com":
+                base = f"https://github.com/{repository}/blob/{commit_sha}"
+            elif u.hostname == "gitlab.com":
+                base = f"https://gitlab.com/{repository}/-/blob/{commit_sha}"
+            else:
+                base = None
+            if base:
+                checkout = Path(checkout).resolve()
+                for page in pages:
+                    source_path = Path(page.metadata["repo_path"]).resolve()
+                    rel = source_path.relative_to(checkout).as_posix()
+                    page.url = base + "/" + quote(rel, safe="/")
+                    page.metadata["source_commit"] = commit_sha
+                    page.metadata["source_path"] = rel
+    return pages

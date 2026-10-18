@@ -28,7 +28,7 @@ services:
     image: postgres:16.6-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-sage}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sage}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
       POSTGRES_DB: ${POSTGRES_DB:-sage}
     volumes:
     - /DATA/docker/mounts/sage/postgres:/var/lib/postgresql/data
@@ -41,7 +41,6 @@ services:
 
     networks:
     - default
-    - cora
   redis:
     image: redis:7.4.2-alpine
     command: ["redis-server", "--appendonly", "yes"]
@@ -59,13 +58,12 @@ services:
   # image runs as non-root UID 10001 by default.
     networks:
     - default
-    - cora
   rustfs:
     image: rustfs/rustfs:1.0.1
     command: ["--console-address", ":9001"]
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
     volumes:
     - /DATA/docker/mounts/sage/rustfs:/data
     healthcheck:
@@ -78,7 +76,6 @@ services:
 
     networks:
     - default
-    - cora
   etcd:
     # REQUIRED by milvus-standalone (see header note). Internal only.
     image: quay.io/coreos/etcd:v3.5.16
@@ -99,9 +96,8 @@ services:
 
     networks:
     - default
-    - cora
   milvus-standalone:
-    image: milvusdb/milvus:latest  # CPU-only, latest stable
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.6.24}  # upgrade after validation
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
@@ -110,7 +106,7 @@ services:
       # by Milvus itself — they point at RustFS's S3-compatible endpoint.
       MINIO_ADDRESS: rustfs:9000
       MINIO_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-sage}
-      MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
+      MINIO_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
       MINIO_USE_SSL: "false"
     volumes:
     - /DATA/docker/mounts/sage/milvus:/var/lib/milvus
@@ -130,7 +126,6 @@ services:
   # ── one-shot jobs ──────────────────────────────────────────────
     networks:
     - default
-    - cora
   catalog-migrate:
     # Runs the catalog's Alembic migrations, then exits (the catalog
     # README documents this as part of the stack). Retrieval and the
@@ -139,7 +134,7 @@ services:
       context: ..
       dockerfile: services/catalog/Dockerfile
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,7 +142,6 @@ services:
 
     networks:
     - default
-    - cora
   milvus_setup:
     build:
       context: ..
@@ -165,7 +159,6 @@ services:
   # ── long-running CPU services ──────────────────────────────────
     networks:
     - default
-    - cora
   embedding:
     build:
       context: ..
@@ -188,7 +181,6 @@ services:
 
     networks:
     - default
-    - cora
   retrieval:
     build:
       context: ..
@@ -196,7 +188,7 @@ services:
     environment:
       MILVUS_URI: http://milvus-standalone:19530
       EMBEDDING_URL: http://embedding:8002
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
       MINILM_MODEL_PATH: ${MINILM_MODEL_PATH:-/artifacts/minilm}
       MINILM_TOKENIZER_PATH: ${MINILM_TOKENIZER_PATH:-/artifacts/minilm}
       HF_HUB_OFFLINE: "1"
@@ -222,7 +214,6 @@ services:
 
     networks:
     - default
-    - cora
   mcp-server:
     build:
       context: ..
@@ -232,10 +223,12 @@ services:
       MCP_HOST: "0.0.0.0"
       MCP_PORT: "8000"
       RETRIEVAL_URL: http://retrieval:8001
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
       REDIS_URL: redis://redis:6379/0
+      SAGE_AUTO_CRAWL: ${SAGE_AUTO_CRAWL:-0}
+      SAGE_RESOLVER_REFRESH_SECONDS: ${SAGE_RESOLVER_REFRESH_SECONDS:-60}
     ports:
-    - "${MCP_HOST_PORT:-8010}:8000"
+    - "${MCP_BIND_IP:-127.0.0.1}:${MCP_HOST_PORT:-8010}:8000"
     depends_on:
       retrieval:
         condition: service_healthy
@@ -253,7 +246,6 @@ services:
 
     networks:
     - default
-    - cora
   ingestion-worker:
     # RQ worker: no published ports. The ingestion agent owns this service's
     # Dockerfile and worker entrypoint; this is the compose wiring.
@@ -262,12 +254,13 @@ services:
       dockerfile: services/ingestion/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
       MILVUS_URI: http://milvus-standalone:19530
       EMBEDDING_URL: http://embedding:8002
+      MINILM_TOKENIZER_PATH: ${MINILM_TOKENIZER_PATH:-/artifacts/minilm}
       RUSTFS_ENDPOINT: rustfs:9000
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
     volumes:
     - /DATA/docker/mounts/sage/model-artifacts:/artifacts:ro
     depends_on:
@@ -286,7 +279,6 @@ services:
 
     networks:
     - default
-    - cora
   crawler-worker:
     # RQ worker: consumes the sage-crawl queue (spec §5.2, §9.3.1, §12).
     # Added in P5 hardening: the crawler Dockerfile and the sage-crawl queue
@@ -298,11 +290,16 @@ services:
       dockerfile: services/crawler/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
+      EMBEDDING_URL: http://embedding:8002
+      MILVUS_URI: http://milvus-standalone:19530
+      MINILM_TOKENIZER_PATH: ${MINILM_TOKENIZER_PATH:-/artifacts/minilm}
       RUSTFS_ENDPOINT: rustfs:9000
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-sage-rustfs}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
       RUSTFS_BUCKET: ${RUSTFS_BUCKET:-sage-snapshots}
+    volumes:
+    - /DATA/docker/mounts/sage/model-artifacts:/artifacts:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -312,11 +309,14 @@ services:
         condition: service_healthy
       rustfs:
         condition: service_healthy
+      embedding:
+        condition: service_healthy
+      milvus-standalone:
+        condition: service_healthy
     restart: unless-stopped
 
     networks:
     - default
-    - cora
   scheduler:
     # Weekly refresh_stale sweep (§12 stale-while-revalidate, §17.6).
     # Runs services.crawler.jobs.refresh_stale() in-process once per
@@ -329,7 +329,7 @@ services:
       dockerfile: services/scheduler/Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:-sage}@postgres:5432/${POSTGRES_DB:-sage}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-sage}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB:-sage}
       REFRESH_INTERVAL_SECONDS: ${REFRESH_INTERVAL_SECONDS:-604800}
       SCHEDULER_STARTUP_JITTER_SECONDS: ${SCHEDULER_STARTUP_JITTER_SECONDS:-600}
       HF_HUB_OFFLINE: "1"
@@ -347,7 +347,6 @@ services:
 
     networks:
     - default
-    - cora
   devdocs-scheduler:
     # Monthly DevDocs image sync (§5.1.1, §17.6): the same scheduler image,
     # but SCHEDULER_JOB=devdocs_sync and a 30-day interval. Once per
@@ -375,11 +374,7 @@ services:
 
     networks:
     - default
-    - cora
 
 networks:
-  cora:
-    name: cora
-    external: true
-  sage-net:
+  default:
     name: sage-net

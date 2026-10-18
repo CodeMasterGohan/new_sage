@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 
 from services.ingestion.doc_chunker import ChunkerSettings
 from services.ingestion.models import Page
@@ -14,7 +15,8 @@ from services.ingestion.pipeline import (
     ingest_pages,
 )
 
-from conftest import word_len
+def word_len(text: str) -> int:
+    return len(text.split())
 
 DIM = EMBEDDING_DIMENSION
 
@@ -197,3 +199,31 @@ def test_milvus_record_carries_ordinal():
         "chunk_id", "library_id", "version_id", "dense",
         "text", "headings", "url", "token_count", "ordinal",
     }
+
+
+def test_missing_catalog_writer_fails_instead_of_reporting_success(monkeypatch):
+    def unavailable(**kwargs):
+        raise RuntimeError("catalog unavailable")
+    monkeypatch.setattr("services.ingestion.pipeline.load_catalog_writer", unavailable)
+    store = FakeVectorStore()
+    with pytest.raises(RuntimeError, match="catalog unavailable"):
+        ingest_pages(
+            "fakelib", "1.0.0", [_page("# Guide\nTest text")], "crawl",
+            embedding_client=FakeEmbedding(), vector_store=store,
+            token_len=word_len, chunker_settings=_settings(),
+        )
+    assert store.records == []
+
+
+def test_partial_vector_index_fails_before_catalog_activation():
+    class IncompleteStore(FakeVectorStore):
+        def upsert(self, records):
+            return len(records) - 1
+    cat = NullCatalogWriter()
+    with pytest.raises(RuntimeError, match="Milvus indexed"):
+        ingest_pages(
+            "fakelib", "1.0.0", [_page("# Guide\nTest text")], "crawl",
+            embedding_client=FakeEmbedding(), vector_store=IncompleteStore(),
+            catalog=cat, token_len=word_len, chunker_settings=_settings(),
+        )
+    assert not cat.activated

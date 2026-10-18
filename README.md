@@ -65,7 +65,9 @@ schedulers (no crawling by hand):
   devdocs-scheduler ── monthly DevDocs image sync (30d cadence)
 ```
 
-All containers join the pre-existing external **`cora`** Docker network.
+All containers now use Sage's isolated **`sage-net`** Docker network.
+No service joins the external `cora` network by default. The MCP server
+has no application-level authentication and is bound to localhost by default.
 Only **one** host port is published: **8010** (the MCP server). Everything
 else is container-to-container.
 
@@ -73,7 +75,7 @@ else is container-to-container.
 
 ```bash
 cp deploy/.env.example deploy/.env
-docker network create cora    # only if not already present on your host
+# Compose creates sage-net automatically; no shared network is required.
 
 # 1. Infrastructure + migrations + seed the catalog
 docker compose -f deploy/docker-compose.yml up -d
@@ -93,7 +95,7 @@ Then point your agent at it:
 ```jsonc
 // Claude Code / MCP client config
 { "mcpServers": { "sage": {
-  "url": "http://<h200>:8010/mcp"
+  "url": "http://127.0.0.1:8010/mcp"
   // …or stdio: python -m mcp_server.stdio_adapter
   //   --retrieval-url http://<h200>:8011
 }}}
@@ -143,6 +145,35 @@ Like its sibling new_DRUID: pre-staged artifacts, pinned manifests with
 sha256 (`services/artifacts/manifests/seed-corpus.yaml`), no downloads at
 runtime, no unapproved endpoints. Object storage is **RustFS**
 (`rustfs/rustfs:1.0.1`, Apache-2.0).
+
+## Optional Rust document preprocessing
+
+The [Rust Markdown fast path](docs/rust-fastpath.md) offers optional,
+Python-compatible heading/fenced-code section scanning and whitespace
+normalization after Python HTML extraction. Initial CI microbenchmarks
+showed approximately **2.6× faster section parsing** and **4.9× faster
+normalization** on synthetic long Markdown. It does **not** change
+robots.txt, crawling rate, text token budgets, embedding, or search.
+
+The Python path remains the default; to test the faster implementation,
+build/install the pinned PyO3 wheel into **both** crawler and ingestion
+worker images and set `SAGE_RUST_FASTPATH=1`. Production rollout still
+requires a real-corpus end-to-end ingest benchmark and verification of
+unchanged chunk IDs.
+
+## GitLab CI/CD
+
+The checked-in [`.gitlab-ci.yml`](.gitlab-ci.yml) covers contracts,
+GitLab runner validation, advisory source/dependency/secret/security scans,
+Docker image builds and registry publishing, immutable release manifests,
+manual staging/production migrations and deployments, rollback, optional
+per-image vulnerability and CycloneDX SBOM reports, and private smoke tests.
+See [`.gitlab/README.md`](.gitlab/README.md) for **environment-specific
+CI variables**, runner/SSH/registry requirements, and the explicit release
+approval sequence. Nothing deploys until the GitLab project is configured
+and a human starts its manual jobs. This repository's GitHub Actions only
+validate the GitLab YAML/Compose contract; production GitLab CI lint must
+still run against the actual GitLab instance.
 
 ## Testing
 

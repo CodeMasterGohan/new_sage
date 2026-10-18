@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import re
+from functools import lru_cache
 from dataclasses import dataclass, field
 
 from .models import Chunk, content_chunk_id
@@ -53,25 +54,24 @@ class ChunkerSettings:
 # ---------------------------------------------------------------------------
 
 
-def _default_token_len(text: str) -> int:
-    """Pre-staged MiniLM tokenizer only. Fails closed — never downloads."""
+@lru_cache(maxsize=4)
+def _load_tokenizer(path: str):
+    """Load each offline tokenizer path only once per worker process."""
     try:
         from transformers import AutoTokenizer
     except ImportError as exc:
-        raise RuntimeError(
-            "transformers is required for the production token_len; "
-            "inject a token_len callable instead."
-        ) from exc
-    path = os.environ.get("MINILM_TOKENIZER_PATH", "")
-    if not path:
-        raise RuntimeError(
-            "MINILM_TOKENIZER_PATH is not set: the reranker tokenizer must be "
-            "pre-staged per the artifact policy. Refusing to download."
-        )
-    tok = AutoTokenizer.from_pretrained(
+        raise RuntimeError("transformers is required for the production token_len") from exc
+    return AutoTokenizer.from_pretrained(
         path, local_files_only=True, trust_remote_code=False
     )
-    return len(tok.encode(text, add_special_tokens=False))
+
+
+def _default_token_len(text: str) -> int:
+    """Count tokens using the pre-staged cached MiniLM tokenizer."""
+    path = os.environ.get("MINILM_TOKENIZER_PATH", "")
+    if not path:
+        raise RuntimeError("MINILM_TOKENIZER_PATH must refer to a pre-staged model")
+    return len(_load_tokenizer(path).encode(text, add_special_tokens=False))
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,20 @@ class _Section:
 
 def _parse_sections(markdown: str) -> list[_Section]:
     """Split markdown into sections on H1/H2/H3; collect prose/code units."""
+    if (os.getenv("SAGE_RUST_FASTPATH", "0") == "1"
+            and not any(ch in markdown for ch in ("\x85", "\u2028", "\u2029", "\x1c", "\x1d", "\x1e", "\x0b", "\x0c"))
+            and "\r" not in markdown.replace("\r\n", "")):
+        from sage_markdown_fastpath import parse_sections
+
+        return [
+            _Section(
+                breadcrumb=breadcrumb,
+                units=[_Unit(kind=kind, text=text, lang=lang)
+                       for kind, text, lang in units],
+            )
+            for breadcrumb, units in parse_sections(markdown)
+        ]
+
     sections: list[_Section] = []
     stack: list[tuple[int, str]] = []  # (level, title)
 
@@ -488,6 +502,9 @@ class DocChunker:
             headings=list(section.breadcrumb),
             code_language=langs[0] if langs else ("code" if has_code else None),
             oversized_code=oversized_code,
-            identifiers=extract_code_identifiers(text) if has_code else [],
+            # Index API identifiers from headings and prose references too.
+            identifiers=extract_code_identifiers(
+                " ".join(section.breadcrumb) + "\n" + text
+            ),
         )
         return chunk

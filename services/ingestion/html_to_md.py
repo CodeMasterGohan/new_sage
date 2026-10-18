@@ -8,6 +8,7 @@ verbatim, fenced, with language tags kept. Pure function, no network.
 from __future__ import annotations
 
 import logging
+import os
 
 log = logging.getLogger("sage.ingestion")
 
@@ -171,6 +172,14 @@ def _tree_to_markdown(tree) -> str:
 
 def _normalize(md: str) -> str:
     """Trim trailing whitespace per line; collapse 3+ blank lines."""
+    # Heavy crawl batches may opt into the compiled Markdown normalization
+    # loop. Python remains authoritative for unusual Unicode line breaks.
+    if (os.getenv("SAGE_RUST_FASTPATH", "0") == "1"
+            and not any(ch in md for ch in ("\x85", "\u2028", "\u2029", "\x1c", "\x1d", "\x1e", "\x0b", "\x0c"))
+            and "\r" not in md.replace("\r\n", "")):
+        from sage_markdown_fastpath import normalize_markdown
+
+        return normalize_markdown(md)
     import re
 
     lines = [line.rstrip() for line in md.splitlines()]

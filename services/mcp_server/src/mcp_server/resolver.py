@@ -24,6 +24,7 @@ import math
 import re
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .models import Alternative, LibraryRecord, ResolutionResult
 
@@ -142,6 +143,31 @@ class LibraryResolver:
             if _normalize(record.library_id) == wanted:
                 return record
         return None
+
+    def get_by_context7_id(self, value: str):
+        """Resolve a known GitHub-style /owner/repo[/version] ID.
+
+        Only registered repository URLs are eligible; never fetch arbitrary
+        user-supplied URLs. Legacy canonical library IDs also work.
+        """
+        raw = value.strip()
+        if not raw.startswith("/"):
+            return self.get(raw), None
+        parts = [part for part in raw.split("/") if part]
+        if len(parts) not in (2, 3):
+            return None, None
+        owner, repo = parts[:2]
+        version = parts[2] if len(parts) == 3 else None
+        if "@" in repo:
+            repo, suffix = repo.rsplit("@", 1)
+            version = version or suffix
+        project = f"{owner}/{repo}".lower()
+        for record in self._records:
+            if record.repo_url:
+                path = urlsplit(record.repo_url).path.strip("/").removesuffix(".git").lower()
+                if path == project:
+                    return record, version
+        return None, None
 
     # -- resolution ---------------------------------------------------------
 

@@ -1,0 +1,8 @@
+# Optional optimized Sage worker; keep normal Python image as default.
+# Build a cp311 compatible sage_markdown_fastpath wheel in the Rust CI job.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY wheels/*.whl /tmp/rust-wheels/
+RUN python -m pip install --no-cache-dir --no-index --find-links=/tmp/rust-wheels sage-markdown-fastpath==0.1.0 \
+    && rm -rf /tmp/rust-wheels
+ENV SAGE_RUST_FASTPATH=1

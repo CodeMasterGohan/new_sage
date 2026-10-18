@@ -55,7 +55,8 @@ _SQL_VERSION_EXACT = (
 )
 _SQL_VERSION_LATEST = (
     "SELECT version FROM library_version "
-    "WHERE library_id = %s::uuid AND is_latest = TRUE LIMIT 1"
+    "WHERE library_id = %s::uuid AND is_latest = TRUE AND status = 'ready' "
+    "ORDER BY revision DESC LIMIT 1"
 )
 
 
@@ -154,4 +155,5 @@ class PostgresLibraryCatalog(LibraryCatalog):
                 "resolved": row[0],
             },
         )
-        return ResolvedVersion(version_id=row[0], version=row[0], fallback=True)
+        # Latest requested implicitly is the expected result, not a fallback.
+        return ResolvedVersion(version_id=row[0], version=row[0], fallback=version is not None)

@@ -1,0 +1,18 @@
+[package]
+name = "sage-markdown-fastpath"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Optional Rust Markdown section scanner for New_sage"
+
+[lib]
+name = "sage_markdown_fastpath"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23.5", features = ["extension-module"] }
+regex = "1.11"
+
+[profile.release]
+lto = true
+codegen-units = 1
