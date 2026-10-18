@@ -146,6 +146,21 @@ sha256 (`services/artifacts/manifests/seed-corpus.yaml`), no downloads at
 runtime, no unapproved endpoints. Object storage is **RustFS**
 (`rustfs/rustfs:1.0.1`, Apache-2.0).
 
+## Optional Rust document preprocessing
+
+The [Rust Markdown fast path](docs/rust-fastpath.md) offers optional,
+Python-compatible heading/fenced-code section scanning and whitespace
+normalization after Python HTML extraction. Initial CI microbenchmarks
+showed approximately **3× faster section parsing** and **5.6× faster
+normalization** on synthetic long Markdown. It does **not** change
+robots.txt, crawling rate, text token budgets, embedding, or search.
+
+The Python path remains the default; to test the faster implementation,
+build/install the pinned PyO3 wheel into **both** crawler and ingestion
+worker images and set `SAGE_RUST_FASTPATH=1`. Production rollout still
+requires a real-corpus end-to-end ingest benchmark and verification of
+unchanged chunk IDs.
+
 ## Testing
 
 ```bash
