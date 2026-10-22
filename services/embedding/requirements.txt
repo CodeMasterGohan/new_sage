@@ -16,3 +16,7 @@ fastapi==0.115.8
 uvicorn[standard]==0.34.0
 pydantic==2.11.7
 pydantic-settings==2.7.1
+
+# Shared GPU backend transport (also imported by the local CPU image).
+httpx==0.28.1
+pillow==13.0.0
