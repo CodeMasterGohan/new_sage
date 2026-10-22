@@ -59,6 +59,7 @@ class VersionSource(str, enum.Enum):
     SEED = "seed"  # bulk seed corpus (§5.1)
     CRAWL = "crawl"  # on-demand web crawl (§5.2)
     REPOCLONE = "repoclone"  # git-clone version pinning (§9.3.1)
+    MANUAL = "manual"  # explicitly uploaded, admin-managed documentation
 
 
 class VersionStatus(str, enum.Enum):
@@ -104,6 +105,7 @@ class JobKind(str, enum.Enum):
     DEVDOCS_SYNC = "devdocs_sync"  # §5.1.1 monthly DevDocs image sync
     REFRESH = "refresh"  # §12 stale-while-revalidate re-crawl
     SEED_INGEST = "seed_ingest"  # §5.1 bulk seed ingestion
+    MANUAL_IMPORT = "manual_import"  # authenticated admin upload
 
 
 class Library(Base):

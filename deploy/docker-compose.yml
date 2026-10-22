@@ -317,6 +317,32 @@ services:
 
     networks:
     - default
+  admin-api:
+    # Optional authenticated upload UI + API; intentionally separate from MCP.
+    # Only enabled with: docker compose --profile admin up -d admin-api
+    profiles: ["admin"]
+    build:
+      context: ..
+      dockerfile: services/manual_import/Dockerfile
+    environment:
+      SAGE_ADMIN_TOKEN: ${SAGE_ADMIN_TOKEN:-}
+      REDIS_URL: redis://redis:6379/0
+      RUSTFS_ENDPOINT: rustfs:9000
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-sage}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:?Set RUSTFS_SECRET_KEY in deploy/.env}
+      RUSTFS_BUCKET: ${RUSTFS_BUCKET:-sage-snapshots}
+    ports:
+    - "${ADMIN_BIND_IP:-127.0.0.1}:${ADMIN_HOST_PORT:-8012}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      crawler-worker:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+    - default
   scheduler:
     # Weekly refresh_stale sweep (§12 stale-while-revalidate, §17.6).
     # Runs services.crawler.jobs.refresh_stale() in-process once per

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAGE · Documentation Import</title>
+  <style>
+    :root{font:16px system-ui,sans-serif;color:#e6eefb;background:#101827;color-scheme:dark}
+    body{max-width:660px;margin:6vh auto;padding:0 20px} h1{font-size:2rem;margin-bottom:.3rem}
+    p{color:#a8b9d0;line-height:1.5} form{display:grid;gap:16px;background:#1b283b;padding:26px;border-radius:16px;border:1px solid #31455f}
+    label{display:grid;gap:7px;font-weight:600} input{font:inherit;color:inherit;background:#101827;border:1px solid #52667e;border-radius:8px;padding:12px;min-width:0}
+    input:focus,button:focus{outline:2px solid #75bcff;outline-offset:2px}button{background:#1d83c2;border:0;border-radius:8px;padding:13px 18px;color:white;font:inherit;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.65;cursor:wait}small{color:#a8b9d0}pre{white-space:pre-wrap;word-break:break-word;padding:15px;background:#172435;border-radius:8px}
+  </style>
+</head>
+<body>
+  <h1>Import documentation</h1>
+  <p>Add local Markdown or HTML documents to SAGE's versioned retrieval catalog. Existing READY revisions remain searchable while a new revision is processed.</p>
+  <form id="import-form">
+    <label>Admin token <input name="token" type="password" required autocomplete="off" placeholder="SAGE_ADMIN_TOKEN"></label>
+    <label>Library <input name="library" required value="gitlab" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}"></label>
+    <label>Version <input name="version" required placeholder="18.x" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,99}"></label>
+    <label>Documentation files <input name="files" type="file" accept=".zip,.md,.markdown,.html,.htm" multiple required>
+      <small>Choose one ZIP containing nested folders, or select multiple Markdown/HTML files. Max 64 MiB archive, 1,000 documents.</small>
+    </label>
+    <button type="submit">Upload and index</button>
+  </form>
+  <p role="status" aria-live="polite" id="status">Ready to import.</p>
+  <pre id="report" hidden></pre>
+  <script>
+    const form=document.querySelector('#import-form');
+    const status=document.querySelector('#status');
+    const report=document.querySelector('#report');
+    form.addEventListener('submit',async event=>{
+      event.preventDefault();
+      const submit=form.querySelector('button');submit.disabled=true;
+      report.hidden=true;status.textContent='Uploading documentation…';
+      const token=form.elements.token.value;
+      const body=new FormData(form);body.delete('token');
+      try{
+        const response=await fetch('/admin/imports',{method:'POST',headers:{Authorization:'Bearer '+token},body});
+        const data=await response.json();
+        if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'Upload rejected');
+        status.textContent='Queued: '+data.job_id;
+        for(let i=0;i<240;i++){
+          await new Promise(resolve=>setTimeout(resolve,3000));
+          const poll=await fetch(data.status_url,{headers:{Authorization:'Bearer '+token}});
+          if(!poll.ok)throw Error('Could not read job status');
+          const result=await poll.json();status.textContent='Import status: '+result.status;
+          if(['finished','failed','stopped','canceled'].includes(result.status)){
+            report.hidden=false;report.textContent=JSON.stringify(result.result||result.error,null,2);break;
+          }
+        }
+      }catch(error){status.textContent='Error: '+error.message}
+      finally{submit.disabled=false}
+    });
+  </script>
+</body>
+</html>

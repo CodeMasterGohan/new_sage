@@ -479,6 +479,8 @@ class CatalogRepository:
                 select(LibraryVersion).where(
                     LibraryVersion.status == VersionStatus.READY.value,
                     LibraryVersion.crawled_at.is_not(None),
+                    # Manually curated sources have no upstream to refresh.
+                    LibraryVersion.source != VersionSource.MANUAL.value,
                 )
             )
             .scalars()
