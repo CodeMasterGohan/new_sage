@@ -6,6 +6,7 @@ identically on the VM now and on the H200 later.
 
 from __future__ import annotations
 
+import math
 from typing import Sequence
 
 
@@ -19,6 +20,39 @@ def recall_at_k(ranked_ids: Sequence[str], gold_id: str, k: int) -> float:
     if k < 1:
         raise ValueError(f"k must be >= 1, got {k}")
     return 1.0 if gold_id in list(ranked_ids)[:k] else 0.0
+
+
+def reciprocal_rank(ranked_ids: Sequence[str], gold_id: str) -> float:
+    """Reciprocal rank (1 / 1-based rank) of ``gold_id`` in ``ranked_ids``, or 0.0."""
+    for idx, cid in enumerate(ranked_ids, start=1):
+        if cid == gold_id:
+            return 1.0 / idx
+    return 0.0
+
+
+def ndcg_at_k(ranked_ids: Sequence[str], gold_id: str, k: int) -> float:
+    """Binary nDCG@k for a single gold chunk (IDCG = 1.0)."""
+    if k < 1:
+        raise ValueError(f"k must be >= 1, got {k}")
+    for idx, cid in enumerate(list(ranked_ids)[:k], start=1):
+        if cid == gold_id:
+            return 1.0 / math.log2(idx + 1)
+    return 0.0
+
+
+def citation_accuracy(
+    url: str | None,
+    section: Sequence[str] | None,
+    expected_url_prefix: str | None = None,
+) -> float:
+    """1.0 when a retrieved passage carries a valid https URL and non-empty section path."""
+    if not url or not isinstance(url, str) or not url.startswith("https://"):
+        return 0.0
+    if not section or not any(str(s).strip() for s in section):
+        return 0.0
+    if expected_url_prefix and not url.startswith(expected_url_prefix):
+        return 0.0
+    return 1.0
 
 
 def version_correctness(retrieved_version: str | None, asked_version: str) -> bool:
@@ -66,6 +100,32 @@ def resolver_accuracy(cases: Sequence[dict], resolver) -> dict:
         "correct": total - len(failures),
         "accuracy": (total - len(failures)) / total if total else 0.0,
         "failures": failures,
+    }
+
+
+def resolver_candidate_accuracy(cases: Sequence[dict], resolver) -> dict:
+    """Score top-1 candidate resolution (exact match OR first fuzzy candidate matches)."""
+    hits = 0
+    for case in cases:
+        query = case["query"]
+        ecosystem = case.get("ecosystem")
+        expected = case.get("expected_library_id")
+        result = resolver.resolve(query, ecosystem=ecosystem)
+        if expected:
+            alts = getattr(result, "alternatives", None) or getattr(result, "candidates", None)
+            top_candidate = alts[0].library_id if alts else None
+            ok = (bool(result.found) and result.library_id == expected) or (
+                not result.found and top_candidate == expected
+            )
+        else:
+            ok = not result.found
+        if ok:
+            hits += 1
+    total = len(cases)
+    return {
+        "total": total,
+        "correct": hits,
+        "accuracy": hits / total if total else 0.0,
     }
 
 

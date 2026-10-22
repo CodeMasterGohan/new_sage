@@ -142,7 +142,7 @@ class MilvusVectorStore(VectorStore):
         return self._search(
             data=[list(vector)],
             anns_field="dense",
-            search_params={"metric_type": "IP", "params": {"nprobe": 16}},
+            search_params={"metric_type": "COSINE", "params": {"ef": max(64, top_k)}},
             predicate=predicate,
             top_k=top_k,
         )

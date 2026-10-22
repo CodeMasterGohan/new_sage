@@ -133,7 +133,7 @@ class HttpRetrievalServiceClient(RetrievalServiceClient):
                     url=p.get("url", ""),
                     section=list(p.get("section") or []),
                     code_language=p.get("code_language"),
-                    score=float(p.get("score", 0.0)),
+                    score=float(p["score"]) if p.get("score") is not None else 0.0,
                 )
                 for p in data.get("passages", [])
             ]
@@ -150,7 +150,7 @@ class HttpRetrievalServiceClient(RetrievalServiceClient):
             ) from exc
 
         return RetrieveResult(
-            library=str(data.get("library", library_id)),
+            library=str((data["library"].get("name") or data["library"].get("library_id") or library_id) if isinstance(data.get("library"), dict) else data.get("library", library_id)),
             version=str(data.get("version", version)),
             version_fallback=bool(data.get("version_fallback", False)),
             passages=passages,

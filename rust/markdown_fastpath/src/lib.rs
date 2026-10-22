@@ -55,7 +55,7 @@ fn parse_sections(markdown: &str) -> Vec<Section> {
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
-        let fence = fence_re().captures(line);
+        let fence = if in_code { None } else { fence_re().captures(line) };
         if !in_code {
             if let Some(cap) = fence {
                 flush_prose(&mut buf, &mut sections, &stack);

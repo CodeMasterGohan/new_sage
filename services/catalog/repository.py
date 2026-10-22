@@ -405,7 +405,7 @@ class CatalogRepository:
         self, version_id: uuid.UUID, status: VersionStatus | str, **fields
     ) -> LibraryVersion:
         """Advance a version's lifecycle status (§5 pipeline steps)."""
-        allowed = {"source", "crawled_at", "refresh_after_days", "is_latest"}
+        allowed = {"source", "crawled_at", "refresh_after_days", "is_latest", "commit_sha"}
         version = self.get_version(version_id)
         version.status = VersionStatus(status).value
         for key, value in fields.items():

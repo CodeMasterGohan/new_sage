@@ -475,3 +475,25 @@ def test_catalog_failure_fails_closed():
     svc = make_service(catalog=BrokenCatalog())
     with pytest.raises(DependencyError):
         svc.retrieve("react", topic="hooks")
+
+
+
+def test_identifier_boost_default_does_not_overwhelm_dual_branch_rrf_consensus():
+    """P0 Defect #4 regression: with default RetrievalConfig, a chunk ranked #1
+    in BOTH dense and BM25 (strong semantic + lexical consensus) must not be
+    buried behind 15 uncorroborated identifier-only hits (e.g. arbitrary chunks
+    matching the library name 'react' in an unranked Milvus query)."""
+    consensus = make_chunk("consensus", text="React hooks let you use state and lifecycle.")
+    noisy_ident_hits = [
+        make_chunk(f"noise_{i}", text=f"incidental mention of react #{i}")
+        for i in range(15)
+    ]
+    store = FakeStore(
+        dense=[consensus],
+        bm25=[consensus],
+        ident=noisy_ident_hits,
+    )
+    # Default RetrievalConfig() (no explicit identifier_boost override).
+    svc = make_service(store=store)
+    resp = svc.retrieve("react", version="19.0.0", topic="react hooks state lifecycle")
+    assert resp.passages[0].text == consensus.text

@@ -115,7 +115,7 @@ class RetrievalService:
             )
 
         # 2. ONE version predicate, applied identically to every branch.
-        predicate = VersionPredicate(library_id=library_id, version_id=resolved.version_id)
+        predicate = VersionPredicate(library_id=library.library_id, version_id=resolved.version_id)
 
         catalog_done = time.monotonic()
         library_info = {

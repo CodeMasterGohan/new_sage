@@ -28,6 +28,7 @@ from .schema import (
     BM25_FUNCTION_NAME,
     COLLECTION_NAME,
     DENSE_DIM,
+    INDEX_SPECS,
     build_index_params,
     build_pymilvus_schema,
     field_names,
@@ -128,7 +129,7 @@ def ensure_indexes(client, collection: str) -> None:
     from pymilvus.milvus_client.index import IndexParams
 
     existing = {idx["field_name"] for idx in client.list_indexes(collection)}
-    missing = [s for s in build_index_params() if s["field_name"] not in existing]
+    missing = [s for s in INDEX_SPECS if s["field_name"] not in existing]
     if not missing:
         log.info("all indexes already exist on %r — skipping", collection)
         return

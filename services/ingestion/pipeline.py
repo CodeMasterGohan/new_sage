@@ -29,17 +29,54 @@ import json
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 import requests
 
 from .doc_chunker import ChunkerSettings, DocChunker
-from .models import Chunk, Page
+from .models import Chunk, Page, content_chunk_id
 
 log = logging.getLogger("sage.ingestion")
 
 EMBEDDING_DIMENSION = 768  # EmbeddingGemma 2 (spec §8)
 INGEST_QUEUE = "sage-ingest"
+DEFAULT_EMBED_BATCH_SIZE = 128
+DEFAULT_MILVUS_UPSERT_BATCH_SIZE = 500
+
+
+class _VectorReuseCache:
+    """Bounded in-process LRU cache of (library_id, page_hash, chunk_order, text) -> dense vector.
+
+    Used during cross-version aliasing (§6) when the target VectorStore
+    instance does not already hold the previous version's records in memory
+    (e.g. isolated store instances in unit tests). Production primarily
+    fetches existing vectors from Milvus via ``vector_store.fetch_vectors``.
+    """
+
+    def __init__(self, max_entries: int = 16384) -> None:
+        self._max = max_entries
+        self._data: OrderedDict[tuple[str, str, int, str], list[float]] = OrderedDict()
+
+    def get(self, library_id: str, page_hash: str, order: int, text: str) -> list[float] | None:
+        key = (library_id, page_hash, order, text)
+        vec = self._data.get(key)
+        if vec is not None:
+            self._data.move_to_end(key)
+            return list(vec)
+        return None
+
+    def put(self, library_id: str, page_hash: str, order: int, text: str, vec: list[float]) -> None:
+        if not vec:
+            return
+        key = (library_id, page_hash, order, text)
+        self._data[key] = list(vec)
+        self._data.move_to_end(key)
+        while len(self._data) > self._max:
+            self._data.popitem(last=False)
+
+
+_REUSE_CACHE = _VectorReuseCache()
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +124,16 @@ class HttpEmbeddingClient(EmbeddingClient):
 
     The service applies the EmbeddingGemma 2 PrefixContract server-side
     (``web_search_document`` for chunks). Chunks carrying code are sent
-    with ``is_code=true``.
+    with ``is_code=true``. Requests are batched and deduplicated per batch
+    so large library versions do not time out or OOM the HTTP endpoint.
     """
 
-    def __init__(self, base_url: str | None = None, timeout: int = 120) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        timeout: int = 120,
+        batch_size: int | None = None,
+    ) -> None:
         self.base_url = (base_url or os.environ.get("EMBEDDING_URL", "")).rstrip("/")
         if not self.base_url:
             raise RuntimeError(
@@ -98,16 +141,12 @@ class HttpEmbeddingClient(EmbeddingClient):
                 "endpoint."
             )
         self.timeout = timeout
+        raw_bs = batch_size or int(
+            os.environ.get("EMBEDDING_CLIENT_BATCH_SIZE", str(DEFAULT_EMBED_BATCH_SIZE))
+        )
+        self.batch_size = max(1, raw_bs)
 
-    def embed_chunks(self, chunks: list[Chunk]) -> list[list[float]]:
-        documents = [
-            {
-                "text": c.text,
-                "title": " > ".join(c.headings),
-                "is_code": bool(c.code_language),
-            }
-            for c in chunks
-        ]
+    def _post_batch(self, documents: list[dict]) -> list[list[float]]:
         resp = requests.post(
             f"{self.base_url}/embed_documents",
             # Contract: the server's EmbedDocumentsRequest takes "items"
@@ -118,10 +157,10 @@ class HttpEmbeddingClient(EmbeddingClient):
         resp.raise_for_status()
         body = resp.json()
         vectors = body.get("vectors", [])
-        if len(vectors) != len(chunks):
+        if len(vectors) != len(documents):
             raise RuntimeError(
                 f"embedding service returned {len(vectors)} vectors for "
-                f"{len(chunks)} chunks: refusing to misalign."
+                f"{len(documents)} chunks: refusing to misalign."
             )
         dim = body.get("dimension", EMBEDDING_DIMENSION)
         if dim != EMBEDDING_DIMENSION:
@@ -130,6 +169,23 @@ class HttpEmbeddingClient(EmbeddingClient):
                 "refusing to silently mix widths."
             )
         return vectors
+
+    def embed_chunks(self, chunks: list[Chunk]) -> list[list[float]]:
+        if not chunks:
+            return []
+        all_vectors: list[list[float]] = []
+        for start in range(0, len(chunks), self.batch_size):
+            batch_chunks = chunks[start : start + self.batch_size]
+            documents = [
+                {
+                    "text": c.text,
+                    "title": " > ".join(c.headings),
+                    "is_code": bool(c.code_language),
+                }
+                for c in batch_chunks
+            ]
+            all_vectors.extend(self._post_batch(documents))
+        return all_vectors
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +209,11 @@ class VectorStore(abc.ABC):
         """Delete chunk records by ID (spec §4 orphan prune after a
         re-crawl inserts a new revision); return count deleted."""
 
+    def fetch_vectors(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        """Optional hook to retrieve existing dense vectors by chunk_id
+        for cross-version aliasing (§6). Defaults to empty dict."""
+        return {}
+
 
 class FakeVectorStore(VectorStore):
     """In-memory store for tests."""
@@ -161,7 +222,15 @@ class FakeVectorStore(VectorStore):
         self.records: list[dict] = []
 
     def upsert(self, records: list[dict]) -> int:
-        self.records.extend(records)
+        by_id = {r["chunk_id"]: i for i, r in enumerate(self.records) if "chunk_id" in r}
+        for rec in records:
+            cid = rec.get("chunk_id")
+            if cid is not None and cid in by_id:
+                self.records[by_id[cid]] = rec
+            else:
+                if cid is not None:
+                    by_id[cid] = len(self.records)
+                self.records.append(rec)
         return len(records)
 
     def delete_version(self, library_id: str, version: str) -> int:
@@ -177,6 +246,14 @@ class FakeVectorStore(VectorStore):
         before = len(self.records)
         self.records = [r for r in self.records if r["chunk_id"] not in ids]
         return before - len(self.records)
+
+    def fetch_vectors(self, chunk_ids: list[str]) -> dict[str, list[float]]:
+        wanted = set(chunk_ids)
+        return {
+            r["chunk_id"]: list(r["dense"])
+            for r in self.records
+            if r.get("chunk_id") in wanted and r.get("dense")
+        }
 
 
 class MilvusVectorStore(VectorStore):
@@ -213,17 +290,26 @@ class MilvusVectorStore(VectorStore):
         self._collection = client
         return client
 
-    def upsert(self, records: list[dict]) -> int:
+    def upsert(
+        self,
+        records: list[dict],
+        *,
+        batch_size: int = DEFAULT_MILVUS_UPSERT_BATCH_SIZE,
+    ) -> int:
         if not records:
             return 0
         client = self._connect()
-        res = client.upsert(collection_name=self.collection_name, data=records)
-        count = res.get("upsert_count", res.get("insert_count"))
-        if count is None or int(count) != len(records):
-            raise RuntimeError(
-                f"Milvus did not confirm every upsert: {count!r} of {len(records)}"
-            )
-        return int(count)
+        total = 0
+        for i in range(0, len(records), batch_size):
+            batch = records[i : i + batch_size]
+            res = client.upsert(collection_name=self.collection_name, data=batch)
+            count = res.get("upsert_count", res.get("insert_count"))
+            if count is None or int(count) != len(batch):
+                raise RuntimeError(
+                    f"Milvus did not confirm every upsert: {count!r} of {len(batch)}"
+                )
+            total += int(count)
+        return total
 
     def delete_version(self, library_id: str, version: str) -> int:
         client = self._connect()
@@ -251,6 +337,30 @@ class MilvusVectorStore(VectorStore):
             )
             total += res.get("delete_count", 0)
         return total
+
+    def fetch_vectors(
+        self, chunk_ids: list[str], *, batch_size: int = 500
+    ) -> dict[str, list[float]]:
+        if not chunk_ids:
+            return {}
+        client = self._connect()
+        out: dict[str, list[float]] = {}
+        for i in range(0, len(chunk_ids), batch_size):
+            batch = chunk_ids[i : i + batch_size]
+            lit = ",".join(
+                '"' + c.replace("\\", "\\\\").replace('"', '\\"') + '"'
+                for c in batch
+            )
+            rows = client.query(
+                collection_name=self.collection_name,
+                filter=f"chunk_id in [{lit}]",
+                output_fields=["chunk_id", "dense"],
+                limit=len(batch),
+            )
+            for row in rows or []:
+                if row.get("chunk_id") and row.get("dense"):
+                    out[row["chunk_id"]] = [float(x) for x in row["dense"]]
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -369,8 +479,11 @@ def ingest_pages(
     active. Returns :class:`IngestReport` as a dict (picklable for RQ).
 
     Cross-version dedup (spec §6): when ``prev_version`` is given, pages
-    whose ``content_hash`` matches the previous version are aliased, not
-    re-chunked or re-embedded.
+    whose ``content_hash`` matches the previous version are aliased and
+    reuse the previous version's dense embeddings without re-calling the
+    embedding model, while still indexing vectors and chunk rows under
+    the new ``version`` so retrieval predicates (``version_id == version``)
+    can find every unchanged page.
     """
     report = IngestReport(library_id=library_id, version=version)
     report.pages_total = len(pages)
@@ -403,21 +516,25 @@ def ingest_pages(
             report.warnings.append(f"dedup lookup failed: {exc}")
 
     chunker = DocChunker(settings=chunker_settings, token_len=token_len)
-    new_pages: list[Page] = []
-    all_chunks: list[Chunk] = []
+    aliased_chunks: list[Chunk] = []
+    new_chunks: list[Chunk] = []
     for page in pages:
         if page.content_hash in prev_hashes:
             catalog.alias_page(library_id, prev_version, version, page)
             report.pages_aliased += 1
+            aliased_page_chunks = chunker.chunk_page(
+                library_id, version, page.url, page.content_hash, page.markdown
+            )
+            aliased_chunks.extend(aliased_page_chunks)
             continue
-        new_pages.append(page)
         chunks = chunker.chunk_page(
             library_id, version, page.url, page.content_hash, page.markdown
         )
-        all_chunks.extend(chunks)
+        new_chunks.extend(chunks)
         catalog.upsert_page(page, chunk_count=len(chunks))
         report.pages_chunked += 1
 
+    all_chunks = aliased_chunks + new_chunks
     if not all_chunks:
         catalog.activate_version(library_id, version)
         log.info(
@@ -430,17 +547,46 @@ def ingest_pages(
         )
         return report.to_dict()
 
+    # --- reuse vectors for aliased pages (§6) ----------------------------
+    if aliased_chunks and prev_version:
+        prev_id_map = {
+            c.chunk_id: content_chunk_id(library_id, prev_version, c.page_id, c.text)
+            for c in aliased_chunks
+        }
+        reused_from_store: dict[str, list[float]] = {}
+        try:
+            reused_from_store = vector_store.fetch_vectors(list(prev_id_map.values()))
+        except Exception as exc:
+            log.warning("vector reuse lookup from store failed: %s", exc)
+        for chunk in aliased_chunks:
+            prev_cid = prev_id_map[chunk.chunk_id]
+            vec = reused_from_store.get(prev_cid)
+            if vec is None:
+                vec = _REUSE_CACHE.get(
+                    library_id, chunk.page_id, chunk.chunk_order, chunk.text
+                )
+            if vec is not None:
+                chunk.dense = vec
+                _REUSE_CACHE.put(
+                    library_id, chunk.page_id, chunk.chunk_order, chunk.text, vec
+                )
+
     # NOTE: no local BM25 sparse vectors — the Milvus ``sage_chunks``
     # collection's server-side BM25 function (``text_to_bm25``) generates
     # the ``sparse`` field from the ``text`` field at insert time.
     # ``Chunk.to_milvus_record()`` already composes ``text`` as
     # chunk text + headings + code identifiers for that function.
 
-    # --- embeddings ------------------------------------------------------
-    client = embedding_client or HttpEmbeddingClient()
-    dense_vectors = client.embed_chunks(all_chunks)
-    for chunk, vec in zip(all_chunks, dense_vectors):
-        chunk.dense = vec
+    # --- embeddings (only chunks without a reused vector) ----------------
+    chunks_to_embed = [c for c in all_chunks if not c.dense]
+    if chunks_to_embed:
+        client = embedding_client or HttpEmbeddingClient()
+        dense_vectors = client.embed_chunks(chunks_to_embed)
+        for chunk, vec in zip(chunks_to_embed, dense_vectors):
+            chunk.dense = vec
+            _REUSE_CACHE.put(
+                library_id, chunk.page_id, chunk.chunk_order, chunk.text, vec
+            )
 
     # --- index ------------------------------------------------------------
     records = [c.to_milvus_record() for c in all_chunks]

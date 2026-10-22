@@ -158,7 +158,7 @@ class CatalogWriterAdapter:
                     url=page.url,
                     title=page.title,
                     content_hash=page.content_hash,
-                    raw_snapshot_key=(page.metadata or {}).get("snapshot_key"),
+                    raw_snapshot_key=(page.metadata or {}).get("raw_snapshot_key") or (page.metadata or {}).get("snapshot_key"),
                 )
             else:
                 row = existing

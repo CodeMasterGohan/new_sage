@@ -38,7 +38,7 @@ def validate_identity(library: str, version: str) -> tuple[str, str]:
 
 
 def safe_path(raw: str) -> str:
-    if "\\" in raw or "\x00" in raw or any(ord(c) < 32 for c in raw):
+    if "\\" in raw or ":" in raw or "\x00" in raw or any(ord(c) < 32 for c in raw):
         raise ImportValidationError("unsafe archive path")
     path = PurePosixPath(raw)
     if (

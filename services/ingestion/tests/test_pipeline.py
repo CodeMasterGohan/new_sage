@@ -227,3 +227,79 @@ def test_partial_vector_index_fails_before_catalog_activation():
             catalog=cat, token_len=word_len, chunker_settings=_settings(),
         )
     assert not cat.activated
+
+
+def test_cross_version_aliased_pages_have_searchable_vectors_in_new_version():
+    """P0 Defect #2 regression: unchanged pages aliased to a new version must
+    have searchable vectors in the vector store and chunk rows in the catalog
+    scoped to the new version_id, without re-embedding unchanged chunks."""
+    store = FakeVectorStore()
+    catalog = NullCatalogWriter()
+    emb1 = FakeEmbedding()
+
+    p1_v1 = Page(library_id="fakelib", version="1.0.0", url="https://docs.example.com/u1",
+                 title="Install", markdown=MD, source="crawl")
+    p2_v1 = Page(library_id="fakelib", version="1.0.0", url="https://docs.example.com/u2",
+                 title="Other", markdown="# Other\n\ninitial text", source="crawl")
+
+    ingest_pages(
+        "fakelib", "1.0.0", [p1_v1, p2_v1], "crawl",
+        embedding_client=emb1, vector_store=store, catalog=catalog,
+        token_len=word_len, chunker_settings=_settings(),
+    )
+    v1_u1_records = [
+        r for r in store.records
+        if r["version_id"] == "1.0.0" and r["url"] == "https://docs.example.com/u1"
+    ]
+    assert len(v1_u1_records) > 0
+
+    # Version 1.0.1: u1 is unchanged, u2 is modified.
+    emb2 = FakeEmbedding()
+    p1_v2 = Page(library_id="fakelib", version="1.0.1", url="https://docs.example.com/u1",
+                 title="Install", markdown=MD, source="crawl")
+    p2_v2 = Page(library_id="fakelib", version="1.0.1", url="https://docs.example.com/u2",
+                 title="Other", markdown="# Other\n\nmodified text in 1.0.1", source="crawl")
+
+    report2 = ingest_pages(
+        "fakelib", "1.0.1", [p1_v2, p2_v2], "crawl",
+        prev_version="1.0.0",
+        embedding_client=emb2, vector_store=store, catalog=catalog,
+        token_len=word_len, chunker_settings=_settings(),
+    )
+    assert report2["pages_aliased"] == 1
+    assert report2["pages_chunked"] == 1
+    # Unchanged page u1 must NOT be re-embedded by emb2.
+    embedded_texts_v2 = [t for call in emb2.calls for t in call]
+    assert all("modified text" in t for t in embedded_texts_v2)
+
+    # CRITICAL: u1 must have searchable vector records under version_id == "1.0.1"!
+    v2_u1_records = [
+        r for r in store.records
+        if r["version_id"] == "1.0.1" and r["url"] == "https://docs.example.com/u1"
+    ]
+    assert len(v2_u1_records) == len(v1_u1_records), (
+        "aliased page u1 has no searchable vectors for version 1.0.1!"
+    )
+    v2_chunks_in_catalog = [
+        c for c in catalog.chunks
+        if c.version_id == "1.0.1" and c.url == "https://docs.example.com/u1"
+    ]
+    assert len(v2_chunks_in_catalog) == len(v1_u1_records)
+
+    # Version 1.0.2: 100% of pages unchanged from 1.0.1.
+    emb3 = FakeEmbedding()
+    p1_v3 = Page(library_id="fakelib", version="1.0.2", url="https://docs.example.com/u1",
+                 title="Install", markdown=MD, source="crawl")
+    p2_v3 = Page(library_id="fakelib", version="1.0.2", url="https://docs.example.com/u2",
+                 title="Other", markdown="# Other\n\nmodified text in 1.0.1", source="crawl")
+    report3 = ingest_pages(
+        "fakelib", "1.0.2", [p1_v3, p2_v3], "crawl",
+        prev_version="1.0.1",
+        embedding_client=emb3, vector_store=store, catalog=catalog,
+        token_len=word_len, chunker_settings=_settings(),
+    )
+    assert report3["pages_aliased"] == 2
+    assert emb3.calls == [], "no embedding calls needed when all pages are aliased"
+    v3_records = [r for r in store.records if r["version_id"] == "1.0.2"]
+    assert len(v3_records) > 0, "100%-aliased version 1.0.2 has 0 vectors in Milvus!"
+

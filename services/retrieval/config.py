@@ -44,7 +44,7 @@ class RetrievalConfig:
     # RRF damping constant: score = sum(1 / (k + rank)).
     rrf_k: int = 60
     # Fixed additive boost applied to identifier-match hits during fusion.
-    identifier_boost: float = 1.0
+    identifier_boost: float = 0.015
     # Bounded additive cross-encoder bonus for exact API reference matches.
     code_symbol_bonus: float = 0.35
     # Expected embedding width; the query vector is validated against it.
@@ -60,7 +60,7 @@ class RetrievalConfig:
             rerank_candidates=_int("RETRIEVAL_RERANK_CANDIDATES", 50),
             max_top_k=_int("RETRIEVAL_MAX_TOP_K", 100),
             rrf_k=_int("RETRIEVAL_RRF_K", 60),
-            identifier_boost=_float("RETRIEVAL_IDENTIFIER_BOOST", 1.0),
+            identifier_boost=_float("RETRIEVAL_IDENTIFIER_BOOST", 0.015),
             code_symbol_bonus=max(0.0, min(1.0, _float("RETRIEVAL_CODE_SYMBOL_BONUS", 0.35))),
             embedding_dimension=_int("EMBEDDING_DIMENSION", 768),
         )

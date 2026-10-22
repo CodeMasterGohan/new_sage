@@ -472,6 +472,7 @@ def crawl_library_version_impl(
     kind = JobKind.REPOCLONE if use_repo else JobKind.CRAWL
     job = repo.enqueue_job(kind=kind, library_id=lib.id, version=version)
     repo.update_job_status(job.id, "running")
+    repo.session.commit()
     log.info("crawl start: %s@%s via %s (revision %d)",
              lib.name, version, source, version_row.revision)
     try:
@@ -492,6 +493,7 @@ def crawl_library_version_impl(
     except Exception as exc:
         repo.update_version_status(version_row.id, VersionStatus.FAILED)
         repo.update_job_status(job.id, "failed", error=str(exc)[:2000])
+        repo.session.commit()
         log.error("crawl failed: %s@%s: %s", lib.name, version, exc)
         raise
     if prev_active_id is not None:
@@ -500,6 +502,7 @@ def crawl_library_version_impl(
             vector_store,
         )
     repo.update_job_status(job.id, "succeeded")
+    repo.session.commit()
     return {"library": lib.name, "version": version, "source": source,
             "revision": version_row.revision, **result}
 
@@ -521,6 +524,7 @@ def _crawl_repo(repo, lib, version_row, version, *, run_git, ingest,
     with tempfile.TemporaryDirectory(prefix="sage-clone-") as tmp:
         checkout = Path(tmp) / "repo"
         sha = clone_at_tag(lib.repo_url, tag, checkout, run=run_git)
+        repo.update_version_status(version_row.id, VersionStatus.CLONING, commit_sha=sha)
         pages = pages_from_clone(
             checkout, library_id=lib.name, version=version, source="repoclone",
             repo_url=lib.repo_url, commit_sha=sha,
@@ -877,6 +881,7 @@ def devdocs_sync_impl(manifest, *, repo, ingest, extractor, importer=None,
             )
             report["pruned_orphans"] = pruned
         results.append({"docset": docset, "version": mver, "pages": len(pages), "ingest": report})
+        repo.session.commit()
     return {"changes": changes, "results": results}
 
 
@@ -907,6 +912,7 @@ def devdocs_sync(manifest: dict[str, str] | None = None) -> dict:
     try:
         job_row = repo.enqueue_job(kind=JobKind.DEVDOCS_SYNC)
         repo.update_job_status(job_row.id, JobStatus.RUNNING)
+        repo.session.commit()
         if manifest is None:
             with _staged_production_manifest() as (prod_manifest, docset_dirs, image_info):
                 result = devdocs_sync_impl(
@@ -926,6 +932,7 @@ def devdocs_sync(manifest: dict[str, str] | None = None) -> dict:
                 vector_store=_real_vector_store(),
             )
         repo.update_job_status(job_row.id, JobStatus.SUCCEEDED)
+        repo.session.commit()
         result["crawl_job_id"] = str(job_row.id)
         return result
     except Exception as exc:
@@ -933,6 +940,9 @@ def devdocs_sync(manifest: dict[str, str] | None = None) -> dict:
             repo.update_job_status(
                 job_row.id, JobStatus.FAILED,
                 error="%s: %s" % (type(exc).__name__, exc),
+            )
+            repo.session.commit()
+            _ = (
             )
         raise
     finally:

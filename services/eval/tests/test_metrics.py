@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from metrics import recall_at_k, resolver_accuracy, version_correctness  # noqa: E402
+from metrics import citation_accuracy, ndcg_at_k, recall_at_k, reciprocal_rank, resolver_accuracy, resolver_candidate_accuracy, version_correctness  # noqa: E402
 
 
 class TestRecallAtK:
@@ -86,3 +86,43 @@ class TestResolverAccuracy:
         assert out["accuracy"] == 0.5
         assert len(out["failures"]) == 1
         assert out["failures"][0]["query"] == "react"
+
+
+class TestExtendedIRMetrics:
+    def test_reciprocal_rank(self):
+        assert reciprocal_rank(["a", "b", "c"], "a") == 1.0
+        assert reciprocal_rank(["a", "b", "c"], "b") == 0.5
+        assert reciprocal_rank(["a", "b", "c"], "z") == 0.0
+
+    def test_ndcg_at_k(self):
+        assert ndcg_at_k(["a", "b", "c"], "a", 3) == 1.0
+        assert 0.63 < ndcg_at_k(["a", "b", "c"], "b", 3) < 0.64
+        assert ndcg_at_k(["a", "b", "c"], "c", 2) == 0.0
+        with pytest.raises(ValueError):
+            ndcg_at_k(["a"], "a", 0)
+
+    def test_citation_accuracy(self):
+        assert citation_accuracy("https://react.dev/reference/react/useEffect", ["Reference", "useEffect"]) == 1.0
+        assert citation_accuracy("http://insecure.local/doc", ["Ref"]) == 0.0
+        assert citation_accuracy("https://react.dev/doc", []) == 0.0
+
+    def test_resolver_candidate_accuracy_includes_top1_fuzzy_candidate(self):
+        class _FuzzyStubResolver:
+            def resolve(self, query, ecosystem=None):
+                if query == "djnago":
+                    return SimpleNamespace(
+                        found=False,
+                        library_id=None,
+                        candidates=[SimpleNamespace(library_id="django")],
+                    )
+                return SimpleNamespace(found=True, library_id=query, candidates=[])
+
+        out = resolver_candidate_accuracy(
+            [
+                {"query": "react", "expected_library_id": "react"},
+                {"query": "djnago", "expected_library_id": "django"},
+            ],
+            _FuzzyStubResolver(),
+        )
+        assert out == {"total": 2, "correct": 2, "accuracy": 1.0}
+

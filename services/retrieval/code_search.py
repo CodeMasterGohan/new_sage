@@ -19,9 +19,11 @@ _BACKTICK = re.compile(r"`([A-Za-z_][A-Za-z0-9_.:]{1,127})`")
 _DOTTED = re.compile(rf"\b({_IDENTIFIER}(?:\.{_IDENTIFIER})+)\b")
 _CALL = re.compile(rf"\b({_IDENTIFIER})\s*\(")
 _SNAKE = re.compile(r"\b([A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+)\b")
-_MIXED = re.compile(r"\b([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)\b")
+_MIXED = re.compile(r"\b([A-Za-z][a-z0-9]*[A-Z][A-Za-z0-9]*)\b")
 _STOP = frozenset(("if", "for", "while", "def", "class", "return", "async", "await",
-                   "print", "len", "new", "list", "str", "map", "set"))
+                   "print", "len", "new", "list", "str", "map", "set",
+                   "numpy", "pytorch", "fastapi", "typescript", "javascript",
+                   "postgresql", "postgres", "django", "pandas", "react", "redis"))
 
 
 def extract_code_symbols(query: str, limit: int = 8) -> list[str]:
@@ -45,7 +47,7 @@ def extract_code_symbols(query: str, limit: int = 8) -> list[str]:
 def _exact_span(text: str, symbol: str) -> bool:
     """Exact identifier boundaries: avoid 'useEffect' matching 'useEffects'."""
     return bool(re.search(
-        rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_])",
+        rf"(?<![A-Za-z0-9_]){re.escape(symbol)}(?![A-Za-z0-9_]|\.[A-Za-z_])",
         text, re.IGNORECASE,
     ))
 

@@ -82,3 +82,10 @@ def test_identifier_and_multipart():
     assert content_type.startswith("multipart/form-data; boundary=")
     assert b"ZIPDATA" in body
     assert b'name="files"' in body
+
+
+
+@pytest.mark.parametrize("name", ["C:/Windows/win.ini", "C:secret.md", "file://etc/passwd"])
+def test_reject_drive_and_scheme_paths(name):
+    with pytest.raises(ImportValidationError):
+        make_archive([(name, b"test")])

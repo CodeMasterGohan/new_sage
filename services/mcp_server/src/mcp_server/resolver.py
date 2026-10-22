@@ -54,7 +54,11 @@ def _trigrams(value: str) -> set[str]:
     v = _normalize(value)
     if len(v) < 3:
         return {v} if v else set()
-    return {v[i : i + 3] for i in range(len(v) - 2)}
+    padded = f"^{v}$"
+    grams = {padded[i : i + 3] for i in range(len(padded) - 2)}
+    if len(v) <= 6:
+        grams.update(padded[i : i + 2] for i in range(len(padded) - 1))
+    return grams
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -112,7 +116,7 @@ class LibraryResolver:
                 # revisions (spec §4) collapse to a single version here;
                 # get-library-docs always serves the active revision.
                 versions = list(dict.fromkeys(v.version for v in ver_rows))
-                latest_row = next((v for v in ver_rows if v.is_latest), None)
+                latest_row = next((v for v in ver_rows if v.is_latest), None) or next((v for v in ver_rows if getattr(v, "status", None) == "ready"), None)
                 latest = (
                     latest_row.version
                     if latest_row is not None

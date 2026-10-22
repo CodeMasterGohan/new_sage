@@ -547,3 +547,146 @@ def test_recrawl_prunes_orphan_chunk_ids(repo):
     assert result["pruned_orphans"] == 2
     # Old revision row still intact in the catalog (prune is Milvus-only).
     assert repo.get_version(old_row.id).status == VersionStatus.READY.value
+
+
+# ---------------------------------------------------------------------------
+# P0 regressions: session commit on close & repo commit_sha persistence
+# ---------------------------------------------------------------------------
+
+
+def test_crawl_library_version_commits_before_closing_session(tmp_path, monkeypatch):
+    """P0 Defect #1 regression: crawl_library_version() closes repo.session
+    in its finally block; without an explicit commit, SQLAlchemy rolls back
+    all catalog writes (version status, pages, chunks, job status)."""
+    from services.crawler import jobs as jobs_mod
+
+    db_path = tmp_path / "crawl_commit.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as seed_session:
+        seed_repo = CatalogRepository(seed_session)
+        lib = seed_repo.create_library(name="example", docs_url="https://docs.example.com")
+        lib_uuid = lib.id
+        lib_id = str(lib_uuid)
+        seed_session.commit()
+
+    monkeypatch.setattr(jobs_mod, "_open_repo", lambda: CatalogRepository(SessionLocal()))
+    monkeypatch.setattr(jobs_mod, "PoliteFetcher", lambda: FakeFetcher(dict(WEB_ROUTES)))
+    monkeypatch.setattr(jobs_mod, "RustFSSnapshotStore", lambda: InMemorySnapshotStore())
+    monkeypatch.setattr(jobs_mod, "_real_ingest", make_ingest([]))
+    monkeypatch.setattr(jobs_mod, "_real_extract", lambda html_text, url: "# Doc\n\nbody")
+    monkeypatch.setattr(jobs_mod, "_real_vector_store", lambda: None)
+
+    jobs_mod.crawl_library_version(lib_id, "3.1", make_latest=True)
+
+    # Inspect from a fresh session after crawl_library_version closed its session.
+    with SessionLocal() as verify_session:
+        verify_repo = CatalogRepository(verify_session)
+        v_row = verify_repo.get_version_by_string(lib_uuid, "3.1")
+        assert v_row is not None, "version row rolled back on session close!"
+        assert v_row.status == VersionStatus.READY.value
+        assert v_row.is_latest is True
+        assert len(verify_repo.list_pages(v_row.id)) == 2
+        assert verify_repo.count_chunks(v_row.id) == 2
+        jobs = verify_repo.list_jobs(library_id=lib_uuid)
+        assert len(jobs) == 1 and jobs[0].status == "succeeded"
+    engine.dispose()
+
+
+def test_crawl_library_version_persists_failed_status_on_error(tmp_path, monkeypatch):
+    """P0 Defect #1 regression: when crawl fails, FAILED status on version and
+    job must be committed before repo.session.close()."""
+    from services.crawler import jobs as jobs_mod
+
+    db_path = tmp_path / "crawl_fail.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    with SessionLocal() as seed_session:
+        seed_repo = CatalogRepository(seed_session)
+        lib = seed_repo.create_library(name="example", docs_url="https://docs.example.com")
+        lib_uuid = lib.id
+        lib_id = str(lib_uuid)
+        seed_session.commit()
+
+    monkeypatch.setattr(jobs_mod, "_open_repo", lambda: CatalogRepository(SessionLocal()))
+    monkeypatch.setattr(jobs_mod, "PoliteFetcher", lambda: FakeFetcher(dict(WEB_ROUTES)))
+    monkeypatch.setattr(jobs_mod, "RustFSSnapshotStore", lambda: InMemorySnapshotStore())
+    monkeypatch.setattr(jobs_mod, "_real_ingest", make_ingest([]))
+    monkeypatch.setattr(jobs_mod, "_real_vector_store", lambda: None)
+
+    with pytest.raises(CrawlError, match="not in detected versions"):
+        jobs_mod.crawl_library_version(lib_id, "9.9")
+
+    with SessionLocal() as verify_session:
+        verify_repo = CatalogRepository(verify_session)
+        v_row = verify_repo.get_version_by_string(lib_uuid, "9.9")
+        assert v_row is not None, "failed version row rolled back on session close!"
+        assert v_row.status == VersionStatus.FAILED.value
+        jobs = verify_repo.list_jobs(library_id=lib_uuid)
+        assert len(jobs) == 1 and jobs[0].status == "failed"
+    engine.dispose()
+
+
+def test_devdocs_sync_commits_before_closing_session(tmp_path, monkeypatch):
+    """P0 Defect #1 regression: devdocs_sync() closes repo.session in its
+    finally block; without an explicit commit, all synced libraries/versions/jobs
+    roll back on session close."""
+    import services.ingestion.importers as importers_mod
+    from services.crawler import jobs as jobs_mod
+
+    db_path = tmp_path / "devdocs_commit.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+
+    monkeypatch.setattr(jobs_mod, "_open_repo", lambda: CatalogRepository(SessionLocal()))
+    monkeypatch.setattr(jobs_mod, "_require_explicit_extractor", lambda docset: Path(f"/fake/{docset}"))
+    monkeypatch.setattr(
+        importers_mod,
+        "import_devdocs_docset",
+        lambda docset_dir, *, library_id, version: [
+            Page(
+                library_id=library_id,
+                version=version,
+                url="https://example.test/demo",
+                title="Demo",
+                markdown="# Demo\n\nbody",
+                source="devdocs",
+            )
+        ],
+    )
+    monkeypatch.setattr(jobs_mod, "_real_ingest", make_ingest([]))
+    monkeypatch.setattr(jobs_mod, "_real_vector_store", lambda: None)
+
+    jobs_mod.devdocs_sync(manifest={"demo": "1.0"})
+
+    with SessionLocal() as verify_session:
+        verify_repo = CatalogRepository(verify_session)
+        demo_lib = verify_repo.get_library_by_name("demo")
+        assert demo_lib is not None, "devdocs_sync rolled back library creation on session close!"
+        demo_ver = verify_repo.get_version_by_string(demo_lib.id, "1.0")
+        assert demo_ver is not None and demo_ver.status == VersionStatus.READY.value
+        jobs = verify_repo.list_jobs()
+        assert len(jobs) == 1 and jobs[0].status == "succeeded"
+    engine.dispose()
+
+
+def test_crawl_repo_persists_commit_sha_on_version_row(repo):
+    """P0 regression: _crawl_repo must persist commit_sha onto LibraryVersion."""
+    lib = repo.create_library(name="widget", repo_url="https://github.com/acme/widget")
+    run_git = make_git_run({"README.md": "# Widget\n\nDoes things."})
+    crawl_library_version_impl(
+        str(lib.id),
+        "2.0.0",
+        repo=repo,
+        fetcher=FakeFetcher({}),
+        snapshots=InMemorySnapshotStore(),
+        ingest=make_ingest([]),
+        run_git=run_git,
+    )
+    version_row = repo.get_version_by_string(lib.id, "2.0.0")
+    assert version_row.commit_sha == "d" * 40

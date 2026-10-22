@@ -51,7 +51,16 @@ def rerank_candidates(
     if code_symbol_bonus > 0:
         symbols = extract_code_symbols(query)
         scores = [
-            float(score) + code_symbol_bonus * code_match_strength(symbols, candidate.record)
+            float(score) + code_symbol_bonus * (
+                code_match_strength(symbols, candidate.record)
+                + (
+                    0.05
+                    if symbols
+                    and any(w in (query or "").lower() for w in ("signature", "parameter", "parameters", "argument", "arguments"))
+                    and any(w in (" ".join(candidate.record.headings) + " " + candidate.record.text).lower() for w in ("signature", "parameter", "parameters", "argument", "arguments"))
+                    else 0.0
+                )
+            )
             for candidate, score in zip(candidates, scores)
         ]
     return sorted(zip(candidates, scores), key=lambda pair: pair[1], reverse=True)

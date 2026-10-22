@@ -232,3 +232,51 @@ async def test_get_docs_token_budget_truncates(resolver):
     )
     assert len(out["passages"]) == 2  # 2 fit in 250 tokens
     assert "truncated" in out["status"]
+
+
+
+async def test_http_retrieval_client_handles_overview_null_score_and_dict_library(monkeypatch):
+    """P1 regression: RetrievalService.retrieve(topic=None).to_dict() emits
+    score=None on passages and library={'library_id': ..., 'name': ..., 'ecosystem': ...}.
+    HttpRetrievalServiceClient.retrieve must not crash with float(None) or stringify a dict."""
+    import httpx
+    from mcp_server.clients import HttpRetrievalServiceClient
+
+    overview_payload = {
+        "library": {"library_id": "react", "name": "React", "ecosystem": "npm"},
+        "version": "19.2.0",
+        "version_fallback": False,
+        "passages": [
+            {
+                "text": "# Getting Started with React",
+                "url": "https://react.dev/learn",
+                "section": ["Getting Started"],
+                "code_language": None,
+                "score": None,
+            }
+        ],
+    }
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def post(self, url, json=None):
+            request = httpx.Request("POST", url)
+            return httpx.Response(200, json=overview_payload, request=request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    client = HttpRetrievalServiceClient("http://retrieval:8001")
+    res = await client.retrieve(
+        library_id="react", version="19.2.0", topic=None, top_k=5, token_budget=2000
+    )
+    assert res.library == "React"
+    assert res.version == "19.2.0"
+    assert len(res.passages) == 1
+    assert res.passages[0].score == 0.0

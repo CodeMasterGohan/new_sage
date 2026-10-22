@@ -59,3 +59,14 @@ def test_diagnostics_is_opt_in_and_preserves_default_response_shape():
     assert "timings_ms" in diag
     assert diag["top_hits"][0]["chunk_id"] == "ref"
     assert diag["top_hits"][0]["symbol_match"] == 1.0
+
+
+
+def test_extract_code_symbols_includes_pascal_case_classes():
+    """P0 Defect #4 regression: PascalCase class/type names like GeneratedField
+    and QuerySet must be extracted as code symbols just like lowerCamelCase."""
+    symbols = extract_code_symbols(
+        "How do I define a column with GeneratedField and filter a QuerySet in Django?"
+    )
+    assert "GeneratedField" in symbols
+    assert "QuerySet" in symbols

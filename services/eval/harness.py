@@ -67,7 +67,7 @@ from corpus import (  # noqa: E402
     load_docs,
     load_resolver_cases,
 )
-from metrics import mean, recall_at_k, resolver_accuracy, version_correctness  # noqa: E402
+from metrics import citation_accuracy, mean, ndcg_at_k, recall_at_k, reciprocal_rank, resolver_accuracy, resolver_candidate_accuracy, version_correctness  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # deterministic tokenizer stand-in (same contract as ingestion's test helper)
@@ -397,6 +397,12 @@ class EvalHarness:
                     "gold_chunk_id": gold,
                     "ranked_chunk_ids": ranked_ids,
                     "n_passages": len(response.passages),
+                    "reciprocal_rank": reciprocal_rank(ranked_ids, gold),
+                    "citation_accuracy": (
+                        citation_accuracy(response.passages[0].url, response.passages[0].section)
+                        if response.passages else 0.0
+                    ),
+                    **{f"ndcg@{k}": ndcg_at_k(ranked_ids, gold, k) for k in ks},
                     **{f"recall@{k}": recall_at_k(ranked_ids, gold, k) for k in ks},
                 }
             )
@@ -413,6 +419,11 @@ class EvalHarness:
             "recall": {
                 f"@{k}": mean([it[f"recall@{k}"] for it in per_item]) for k in ks
             },
+            "mrr": mean([it["reciprocal_rank"] for it in per_item]),
+            "ndcg": {
+                f"@{k}": mean([it[f"ndcg@{k}"] for it in per_item]) for k in ks
+            },
+            "citation_accuracy": mean([it["citation_accuracy"] for it in per_item]),
             "recall_by_type": {
                 t: {
                     f"@{k}": mean(
