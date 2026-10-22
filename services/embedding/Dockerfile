@@ -18,6 +18,7 @@ COPY services/embedding/reuse.py /app/services/embedding/reuse.py
 COPY services/embedding/service.py /app/services/embedding/service.py
 COPY services/embedding/settings.py /app/services/embedding/settings.py
 COPY services/embedding/main.py /app/services/embedding/main.py
+COPY services/embedding/vllm_backend.py /app/services/embedding/vllm_backend.py
 # §8 prefix contract: vendored byte-identical copies of the verified
 # new_DRUID sources. Loaded by reuse.py without executing any package init.
 # Never retype or edit these files — byte-identity is the contract guarantee.
