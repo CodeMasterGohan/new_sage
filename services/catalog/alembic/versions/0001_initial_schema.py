@@ -28,7 +28,7 @@ def upgrade() -> None:
                   default=uuid.uuid4),
         sa.Column("name", sa.Text(), unique=True, nullable=False),
         sa.Column("aliases", postgresql.ARRAY(sa.Text()), nullable=False,
-                  server_default="'{}'"),
+                  server_default=sa.text("'{}'::text[]")),
         sa.Column("ecosystem", sa.String(64), nullable=True),
         sa.Column("docs_url", sa.Text(), nullable=True),
         sa.Column("repo_url", sa.Text(), nullable=True),
@@ -87,7 +87,7 @@ def upgrade() -> None:
         sa.Column("text", sa.Text(), nullable=False),
         sa.Column("token_count", sa.Integer(), nullable=True),
         sa.Column("headings", postgresql.ARRAY(sa.Text()), nullable=False,
-                  server_default="'{}'"),
+                  server_default=sa.text("'{}'::text[]")),
     )
     op.create_index("ix_chunk_page_id", "chunk", ["page_id"])
 

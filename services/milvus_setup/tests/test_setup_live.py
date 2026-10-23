@@ -59,5 +59,8 @@ def test_provision_is_idempotent(client):
 
 def test_indexes_present_after_provision(client):
     ensure_collection(Settings(uri=os.environ["MILVUS_URI"], collection=TEST_COLLECTION))
-    by_field = {i["field_name"]: i for i in client.list_indexes(TEST_COLLECTION)}
+    by_field = {
+        client.describe_index(TEST_COLLECTION, name)["field_name"]: name
+        for name in client.list_indexes(TEST_COLLECTION)
+    }
     assert "dense" in by_field and "sparse" in by_field

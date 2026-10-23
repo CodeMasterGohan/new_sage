@@ -108,6 +108,25 @@ def test_fuzzy_typo_returns_scored_alternatives(resolver):
     assert scores == sorted(scores, reverse=True)
 
 
+def test_unique_trailing_character_omission_resolves(resolver):
+    assert resolver.resolve("fastap").library_id == "fastapi"
+
+
+def test_short_prefix_does_not_auto_resolve(resolver):
+    assert resolver.resolve("fas").found is False
+
+
+def test_ambiguous_truncated_name_requires_disambiguation():
+    from mcp_server.resolver import LibraryResolver
+
+    resolver = LibraryResolver([
+        _record("fastapi", "FastAPI", "pypi"),
+        _record("fastapp", "FastApp", "npm"),
+    ])
+    assert resolver.resolve("fastap").found is False
+    assert resolver.resolve("fastap", ecosystem="pypi").library_id == "fastapi"
+
+
 # -- unknown -----------------------------------------------------------------
 
 

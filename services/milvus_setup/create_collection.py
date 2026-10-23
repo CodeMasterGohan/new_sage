@@ -128,7 +128,10 @@ def ensure_indexes(client, collection: str) -> None:
     """Create any missing indexes (dense HNSW + sparse BM25)."""
     from pymilvus.milvus_client.index import IndexParams
 
-    existing = {idx["field_name"] for idx in client.list_indexes(collection)}
+    existing = {
+        client.describe_index(collection, index_name)["field_name"]
+        for index_name in client.list_indexes(collection)
+    }
     missing = [s for s in INDEX_SPECS if s["field_name"] not in existing]
     if not missing:
         log.info("all indexes already exist on %r — skipping", collection)

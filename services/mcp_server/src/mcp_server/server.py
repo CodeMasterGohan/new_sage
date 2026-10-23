@@ -25,7 +25,6 @@ from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount
 
 log = logging.getLogger(__name__)
 
@@ -232,8 +231,8 @@ def create_app(
     mcp = FastMCP("new-sage")
     _register_tools(mcp, deps)
 
-    inner = mcp.streamable_http_app()
-    app = Starlette(routes=[Mount("/mcp", app=inner)])
+    # FastMCP owns both the /mcp route and its session-manager lifespan.
+    app = mcp.streamable_http_app()
     app.add_middleware(OriginMiddleware, allowed_origins=settings.allowed_origins)
     log.info(
         "new_sage MCP server starting: retrieval_url=%s resolver_table=%s "

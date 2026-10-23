@@ -229,6 +229,22 @@ class LibraryResolver:
                 ],
             )
 
+        # Accept a single missing trailing character only when the name or
+        # alias identifies one library. Keep short or ambiguous prefixes as
+        # suggestions rather than lowering the general fuzzy threshold.
+        if len(key) >= 5:
+            prefix_hits = [
+                record for record in self._records
+                if (not eco or _normalize(record.ecosystem) == eco)
+                and any(
+                    len(_normalize(name)) == len(key) + 1
+                    and _normalize(name).startswith(key)
+                    for name in (record.name, *record.aliases)
+                )
+            ]
+            if len(prefix_hits) == 1:
+                return self._found(prefix_hits[0], alternatives=[])
+
         # 3. Fuzzy BM25-over-names fallback.
         scored = self._fuzzy(library_name)
         if scored and scored[0][1] >= _FUZZY_AUTO_SCORE:
