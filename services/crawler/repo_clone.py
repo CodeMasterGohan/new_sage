@@ -6,7 +6,7 @@ version — no detection heuristics needed. ``git clone --branch <tag>
 extraction, so the checkout goes straight to the ingestion importers.
 
 ``clone_at_tag`` returns the commit SHA. ``find_doc_files`` collects
-``README.md`` + ``docs/**/*.md`` + ``CHANGELOG.md`` (case variants) for
+``README.md`` + ``doc/**/*.md`` + ``docs/**/*.md`` + ``CHANGELOG.md`` for
 ``services.ingestion.importers.import_markdown_files``.
 
 The git runner is injectable (``run``) so tests never clone.
@@ -86,7 +86,7 @@ def clone_at_tag(
 def find_doc_files(checkout: str | Path) -> list[Path]:
     """Collect doc Markdown files from a checkout (spec §9.3.1).
 
-    ``README.md`` (repo root) + ``docs/**/*.md`` + ``CHANGELOG.md``,
+    ``README.md`` (repo root) + ``doc/**/*.md`` + ``docs/**/*.md`` + ``CHANGELOG.md``,
     matching case-insensitively (``Readme.md``, ``Changelog.MD``, ...).
     Sorted for determinism. ``.git`` and other dot-directories are skipped.
     """
@@ -105,7 +105,7 @@ def find_doc_files(checkout: str | Path) -> list[Path]:
             found.append(path)
         elif name == "changelog.md" and len(rel_parts) == 1:
             found.append(path)
-        elif len(rel_parts) > 1 and rel_parts[0].lower() == "docs":
+        elif len(rel_parts) > 1 and rel_parts[0].lower() in {"doc", "docs"}:
             found.append(path)
     return sorted(found, key=lambda p: p.relative_to(checkout).as_posix())
 

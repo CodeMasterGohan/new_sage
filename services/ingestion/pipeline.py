@@ -261,11 +261,11 @@ class MilvusVectorStore(VectorStore):
 
     def __init__(
         self,
-        collection_name: str = "sage_chunks",
+        collection_name: str | None = None,
         uri: str | None = None,
         token: str | None = None,
     ) -> None:
-        self.collection_name = collection_name
+        self.collection_name = collection_name or os.environ.get("MILVUS_COLLECTION") or "sage_chunks"
         self.uri = uri or os.environ.get("MILVUS_URI", "http://milvus:19530")
         self.token = token or os.environ.get("MILVUS_TOKEN", "")
         self._collection = None

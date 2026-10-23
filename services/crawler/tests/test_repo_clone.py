@@ -95,6 +95,14 @@ def test_find_doc_files_collects_readme_docs_changelog(tmp_path):
     assert found == sorted(found, key=lambda p: p.relative_to(root).as_posix())
 
 
+def test_gitlab_singular_doc_directory_is_discovered(tmp_path):
+    root = tmp_path / 'gitlab'
+    expected = _write(root, 'doc/ci/yaml/_index.md', '# GitLab CI/CD YAML reference')
+    _write(root, 'doc/.hidden/private.md', 'excluded')
+    _write(root, 'src/internal.md', 'excluded')
+    assert find_doc_files(root) == [expected]
+
+
 def test_pages_from_clone_matches_importer_page_shape(tmp_path):
     root = tmp_path / "repo"
     _write(root, "README.md", "# Widget\n\nDoes things.")
