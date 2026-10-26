@@ -101,9 +101,13 @@ class MiniLMReranker(Reranker):
             )
         from sentence_transformers import CrossEncoder  # lazy: keeps tests import-light
 
-        self._model = CrossEncoder(
-            self.model_path, device="cpu", tokenizer_name=self.tokenizer_path
-        )
+        self._model = CrossEncoder(self.model_path, device="cpu", local_files_only=True)
+        if os.path.realpath(self.tokenizer_path) != os.path.realpath(self.model_path):
+            from transformers import AutoTokenizer
+
+            self._model.tokenizer = AutoTokenizer.from_pretrained(
+                self.tokenizer_path, local_files_only=True
+            )
 
     def score(self, query: str, passages: Sequence[str]) -> list[float]:
         pairs = [(query, passage) for passage in passages]

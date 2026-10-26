@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     OMP_NUM_THREADS=8
 WORKDIR /app
 COPY services/embedding/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 \
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 torchvision==0.21.0 \
  && pip install --no-cache-dir -r /tmp/requirements.txt
 # App layout: real "services.embedding" package so relative imports work
 # (uvicorn services.embedding.main:app). The contract loader (reuse.py)

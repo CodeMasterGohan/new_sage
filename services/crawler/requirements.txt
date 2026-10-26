@@ -14,6 +14,7 @@ psycopg[binary]==3.2.9    # Postgres driver (matches catalog service pin)
 # html_to_md.html_to_markdown, importers). Pins match the ingestion
 # service exactly so the in-process ingest path has its full closure.
 trafilatura==2.3.1        # HTML -> Markdown (primary)
+transformers==5.20.2      # production chunk token counts use the staged MiniLM tokenizer
 readability-lxml==0.9     # HTML -> Markdown fallback
 lxml==6.1.3
 lxml_html_clean==0.4.5

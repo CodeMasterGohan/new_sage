@@ -8,6 +8,7 @@ lxml_html_clean==0.4.5
 rq==2.12.0                # job queue (production worker)
 redis==8.1.0
 requests==2.34.2          # embedding-service HTTP client
+transformers==5.20.2      # production chunk token counts use the staged MiniLM tokenizer
 pymilvus==2.5.6           # Milvus sage_chunks sink (lazy import)
 pdftext==0.4.1            # PDF fallback (spec §5.4); CPU-only, no models
 pypdfium2==4.30.0         # pdftext 0.4.1 pins ==4.30.0
