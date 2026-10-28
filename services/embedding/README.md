@@ -1,9 +1,10 @@
 # Embedding service — EmbeddingGemma 2 (spec §8)
 
-Standalone CPU FastAPI service. **CPU ONLY** (spec §13: new_sage has no GPU
-requirement anywhere). This service must never request GPU resources —
-torch is installed from the CPU index and the backend is constructed with
-`device="cpu"`.
+Lightweight FastAPI adapter. By default it sends inference to the same
+Docker vLLM `google/embeddinggemma-2` instance used by DRUID at
+`http://vllm-embedding:8000/v1`. The adapter keeps the existing SAGE API and
+prefix contract, and does not load another model or request GPU resources.
+See [deployment instructions](../../deploy/README.md) for the shared server.
 
 ## The §8 contract (read this before touching prefixes)
 
@@ -26,7 +27,7 @@ vendored file's sha256 against accidental edits.
 
 ## Endpoints (exact HTTP contract)
 
-Base URL: `http://localhost:8012`.
+Internal base URL: `http://embedding:8002` (not host-published by Compose).
 
 ### `POST /embed`
 
@@ -72,7 +73,7 @@ Response (200): same shape as `/embed` — `{"vectors": [...], "dimension": 768}
 
 Response (200):
 ```json
-{"model": "google/embeddinggemma-2", "dimension": 768, "backend": "st", "device": "cpu", "model_loaded": true}
+{"model": "google/embeddinggemma-2", "dimension": 768, "backend": "vllm", "device": "remote", "model_loaded": true}
 ```
 - `model_loaded` is true only after the first vector passes the width + normalization guard (the startup warmup does this).
 - 503 while the backend is not ready.
@@ -84,21 +85,28 @@ Response (200):
 | `MODEL_PATH` | (required for `st`) | Pre-staged artifact dir, read-only mount. `EMBEDDING_MODEL_PATH`, `EMBEDDING_MODEL_DIR` accepted as aliases. |
 | `EMBEDDING_MODALITY_CONFIG` | `text+image` | or `text-only` (fallback) |
 | `EMBEDDING_DIMENSION` | `768` | Must be a validated Matryoshka width (768/512/256/128) |
-| `EMBEDDING_BACKEND` | `st` | `st` = sentence-transformers; `mock` = deterministic fake (tests/dev) |
+| `EMBEDDING_BACKEND` | `vllm` | Shared inference. `st` = optional local sentence-transformers; `mock` = deterministic fake for tests. |
+| `EMBEDDING_VLLM_URL` | `http://vllm-embedding:8000/v1` | OpenAI-compatible API base URL, including `/v1`. |
+| `EMBEDDING_VLLM_API_KEY` | empty | Optional bearer credential. |
+| `EMBEDDING_VLLM_TIMEOUT_S` | `120` | Request timeout; errors fail closed without a local fallback. |
 | `EMBEDDING_BATCH_SIZE` | `32` | |
 | `EMBEDDING_MAX_CONCURRENCY` | `4` | semaphore around the encode lock |
 | `EMBEDDING_MAX_INPUT_CHARS` | `32768` | hard reject above this — inputs arrive pre-chunked (§7) |
 | `EMBEDDING_PORT` | `8002` | |
 
-Startup **fails fast** when the artifact is missing/invalid — production
-services never download at runtime (spec §14, `HF_HUB_OFFLINE=1`,
-`TRANSFORMERS_OFFLINE=1` in the image).
+Startup **fails fast** when vLLM is unavailable or returns invalid vectors.
+It checks the model ID, count, ordering, width and finite numeric components
+on every response. No adapter downloads model artifacts. The opt-in local
+`st` backend still requires a pre-staged read-only artifact.
 
 ## Matryoshka
 
 Coded for 768 dims. A validated width change (512/256/128) plugs into
-`EMBEDDING_DIMENSION` with re-normalization; the service verifies the first
-vector's width and normalization and fails closed on mismatch. Any width
+`EMBEDDING_DIMENSION` with re-normalization. The vLLM client always requests
+native 768-dimensional vectors, validates them, then truncates and
+normalizes locally as the existing sentence-transformers backend does.
+It omits the upstream `dimensions` parameter because the released model
+config does not advertise `is_matryoshka` and vLLM rejects it. Any width
 change requires full re-embedding per the migration rule — the service will
 not silently mix widths.
 
@@ -108,14 +116,18 @@ The image copies the vendored contract files
 (`services/embedding/vendor/ingestion/{embeddings,config,chunker,tree,identifiers}.py`)
 byte-identically from the verified new_DRUID sources. `reuse.py` loads them
 as a `sage_contract.*` stub package — no clash with the real `services`
-package. Build context is `build/`.
+package. Build context is the repository root.
 
-Run:
+Run against the already-started shared server:
 ```bash
 docker build -f services/embedding/Dockerfile -t new-sage-embedding .
-docker run --rm -p 8012:8002 \
-  -e EMBEDDING_BACKEND=st \
-  -e MODEL_PATH=/models/embeddinggemma-2 \
-  -v /path/to/model-registry/embeddinggemma-2:/models/embeddinggemma-2:ro \
+docker run --rm --network embedding-net \
+  -e EMBEDDING_VLLM_URL=http://vllm-embedding:8000/v1 \
   new-sage-embedding
 ```
+
+For the optional local CPU backend, build with
+`--build-arg INSTALL_LOCAL_EMBEDDINGS=true`, set `EMBEDDING_BACKEND=st`,
+and mount the staged model read-only at `MODEL_PATH`. The default image
+installs only the HTTP adapter dependencies; it contains no PyTorch,
+Transformers or sentence-transformers runtime.

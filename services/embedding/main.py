@@ -1,7 +1,6 @@
-"""EmbeddingGemma 2 CPU service — FastAPI app (spec §8).
+"""EmbeddingGemma 2 API adapter backed by shared vLLM inference (spec §8).
 
-CPU ONLY (spec §13): new_sage has no GPU requirement anywhere. This
-service must never request GPU resources.
+The adapter runs on CPU; the shared Docker vLLM service owns inference.
 
 HTTP contract (see README.md — retrieval + ingestion agents code against
 this):
@@ -14,9 +13,8 @@ this):
 
 Tasks accepted: question_answering, code_retrieval, search_result.
 
-Startup fails fast when the pre-staged artifact is missing or invalid —
-production services never download at runtime (spec §14,
-HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1).
+Startup fails fast when the configured backend is unavailable or returns
+invalid vectors. Adapter containers never download model artifacts.
 """
 
 from __future__ import annotations
@@ -71,7 +69,7 @@ async def lifespan(app: FastAPI):
     global service
     settings = EmbeddingServiceSettings()
     log.info(
-        "starting embedding service: model=%s modality=%s dim=%d backend=%s device=cpu port=%d",
+        "starting embedding service: model=%s modality=%s dim=%d backend=%s port=%d",
         settings.model_id,
         settings.modality_config,
         settings.dimension,
@@ -80,8 +78,7 @@ async def lifespan(app: FastAPI):
     )
     try:
         service = EmbeddingService(settings)
-        # Warmup forces the backend to load NOW: missing/invalid artifacts
-        # fail startup loudly instead of on first request (spec §14).
+        # Verify the remote server (or local artifact) NOW, before readiness.
         await service.embed_texts(["sage warmup"])
     except Exception:
         log.critical("embedding service failed startup — refusing to run degraded", exc_info=True)

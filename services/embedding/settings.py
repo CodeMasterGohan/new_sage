@@ -1,8 +1,4 @@
-"""Embedding service settings (spec §8, §13).
-
-CPU-only by design: new_sage has no GPU requirement anywhere (spec §13).
-This service must never request GPU resources.
-"""
+"""Embedding adapter settings; shared vLLM is the default inference backend."""
 
 from __future__ import annotations
 
@@ -42,8 +38,11 @@ class EmbeddingServiceSettings(BaseSettings):
 
     normalize: bool = Field(default=True)
 
-    # "st" (sentence-transformers production backend) or "mock" (tests/dev).
-    backend: str = Field(default="st")
+    # One shared model server serves DRUID and SAGE. Local inference is opt-in.
+    backend: str = Field(default="vllm")
+    vllm_url: str = Field(default="http://vllm-embedding:8000/v1")
+    vllm_api_key: str = Field(default="", repr=False)
+    vllm_timeout_s: float = Field(default=120.0, gt=0)
 
     # CPU serving knobs.
     batch_size: int = Field(default=32, ge=1, le=256)
@@ -74,6 +73,6 @@ class EmbeddingServiceSettings(BaseSettings):
     @field_validator("backend")
     @classmethod
     def _validate_backend(cls, v: str) -> str:
-        if v not in ("st", "mock"):
-            raise ValueError(f"unknown backend {v!r}: expected 'st' or 'mock'.")
+        if v not in ("vllm", "st", "mock"):
+            raise ValueError(f"unknown backend {v!r}: expected 'vllm', 'st' or 'mock'.")
         return v

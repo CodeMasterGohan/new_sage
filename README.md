@@ -3,8 +3,8 @@
 > Version-pinned documentation for your AI coding agent. Ask about any
 > library's API; get back accurate, cited docs — never hallucinated
 > signatures. **No authentication** (the corpus is public documentation,
-> and it's for personal use). Deploys CPU-only to the same H200 as
-> new_DRUID.
+> and it's for personal use). Runs CPU app services on the same host as
+> new_DRUID, with EmbedGemma inference on their shared Docker vLLM server.
 
 ---
 
@@ -65,7 +65,9 @@ schedulers (no crawling by hand):
   devdocs-scheduler ── monthly DevDocs image sync (30d cadence)
 ```
 
-All containers now use Sage's isolated **`sage-net`** Docker network.
+Application containers use Sage's isolated **`sage-net`** Docker network.
+The embedding adapter also joins **`embedding-net`** to reach the shared
+EmbedGemma vLLM service used by DRUID.
 No service joins the external `cora` network by default. The MCP server
 has no application-level authentication and is bound to localhost by default.
 Only **one** host port is published: **8010** (the MCP server). Everything
@@ -75,20 +77,29 @@ else is container-to-container.
 
 ```bash
 cp deploy/.env.example deploy/.env
-# Compose creates sage-net automatically; no shared network is required.
+# Fill deploy/.env secrets and stage models before starting.
+# Compose creates sage-net; create the shared embedding network once.
+docker network create embedding-net # skip if already present
+# Start this shared project ONCE from either repo, before application services.
+docker compose --env-file deploy/.env -f deploy/docker-compose.embedding.yml up -d --wait --wait-timeout 600
 
 # 1. Infrastructure + migrations + seed the catalog
-docker compose -f deploy/docker-compose.yml up -d
-docker compose -f deploy/docker-compose.yml run --rm catalog-migrate
-docker compose -f deploy/docker-compose.yml run --rm milvus_setup
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm catalog-migrate
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm milvus_setup
 # 2. Seed corpus (DevDocs image + MDN + tldr, per APPROVAL-2026-101)
 #    The first devdocs_sync does a catch-up ingest for every docset
 #    without a READY row; MDN/tldr are enqueued as version-pinned crawls.
-docker compose -f deploy/docker-compose.yml run --rm scheduler \
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml run --rm scheduler \
   python -m scheduler.run --once --job devdocs_sync
 # 3. Everything else (schedulers included)
-docker compose -f deploy/docker-compose.yml up -d
+docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d
 ```
+
+See [`deploy/shared-embedding.md`](deploy/shared-embedding.md) for model staging,
+upgrading an existing environment, shared GPU sizing and text/image smoke tests.
+The shared server uses the same model, task prefixes and 768-dimension vectors
+as before; there is no silent fallback to local embeddings.
 
 Then point your agent at it:
 
@@ -146,6 +157,8 @@ Highlights from `deploy/.env.example`:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `EMBEDDING_BACKEND` | `vllm` | Shared EmbedGemma inference |
+| `EMBEDDING_VLLM_URL` | `http://vllm-embedding:8000/v1` | Common endpoint used by DRUID and SAGE |
 | `MCP_HOST_PORT` | `8010` | The only published host port |
 | `REFRESH_INTERVAL_SECONDS` | `7d` | Weekly refresh cadence |
 | `RERANK_WIDTH` | `50` | MiniLM rerank depth |
@@ -158,7 +171,7 @@ services/
   mcp_server/   resolve-library-id + get-library-docs (Streamable HTTP + stdio)
   crawler/      On-demand crawl, DevDocs image sync, seed ingestion, snapshots
   ingestion/    Extract → chunk (420/48) → embed → index pipeline
-  embedding/    EmbeddingGemma 2 CPU service (shared prefix contract)
+  embedding/    EmbeddingGemma 2 adapter to shared vLLM (shared prefix contract)
   retrieval/    Hybrid search + RRF + MiniLM rerank (CPU)
   catalog/      PostgreSQL: libraries, immutable version revisions, Alembic
   scheduler/    Weekly refresh_stale (stdlib-only, jittered, --once trigger)

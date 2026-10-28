@@ -1,0 +1,9 @@
+# Optional CPU inference backend, installed only with INSTALL_LOCAL_EMBEDDINGS=true.
+# Install CPU torch/torchvision wheels before this file (see Dockerfile).
+# These versions load the released EmbeddingGemma 2 processor and architecture.
+sentence-transformers==6.1.0
+torch==2.6.0
+torchvision==0.21.0
+transformers==5.20.2
+huggingface-hub==1.33.0
+pillow==13.0.0

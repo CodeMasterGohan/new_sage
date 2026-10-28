@@ -1,9 +1,10 @@
 # New_sage deploy
 
-CPU-only, single-`docker compose` stack for the local-first Context7
-alternative (spec §13). **No auth, no GPU.** All services speak plain HTTP
-on `sage-net`; the host firewall / Tailscale interface is the security
-boundary. Do not expose these ports to the public internet.
+CPU application stack for the local-first Context7 alternative.
+**No auth on MCP.** EmbedGemma inference uses the GPU vLLM service shared
+with DRUID; start it first using [shared-embedding.md](shared-embedding.md).
+Application services speak plain HTTP on `sage-net`; the host firewall /
+Tailscale interface is the security boundary. Do not expose these ports to the public internet.
 
 ## Service map
 
@@ -11,7 +12,7 @@ boundary. Do not expose these ports to the public internet.
 |---|---|---|---|
 | `mcp-server` | 8000 | `${MCP_HOST_PORT:-8010}` | FastMCP: `resolve-library-id`, `get-library-docs` (spec §10); the only published port (AI CLI) |
 | `retrieval` | 8001 | — (internal-only) | RRF hybrid (dense+BM25+identifier) + MiniLM rerank (spec §9) |
-| `embedding` | 8002 | — (internal-only) | EmbeddingGemma 2, CPU-served, 768-dim (spec §8) |
+| `embedding` | 8002 | — (internal-only) | EmbeddingGemma 2 adapter → shared vLLM, 768-dim |
 | `ingestion-worker` | — | — | RQ worker: crawl → trafilatura → chunk → embed → index (spec §5) |
 | `milvus-standalone` | 19530 / 9091 | — (internal-only) | `sage_chunks` collection (spec §9.1) |
 | `rustfs` | 9000 / 9001 | — (internal-only) | raw snapshots + seed checkouts (spec §11) |
@@ -19,7 +20,8 @@ boundary. Do not expose these ports to the public internet.
 | `redis` | 6379 | — (internal-only) | crawl queue + hot-response cache (spec §11) |
 | `etcd` | — | — | internal only; required by milvus-standalone |
 
-One network (`sage-net`); persistent data in host bind mounts under
+Private app network `sage-net`, plus `embedding-net` on the embedding
+adapter for shared inference; persistent data in host bind mounts under
 `/DATA/docker/mounts/sage/<service>` (postgres, redis, rustfs, etcd, milvus,
 model-artifacts) — no named volumes.
 
@@ -42,31 +44,26 @@ Milvus on first start under the root credentials).
 
 ## Staging model artifacts
 
-Services are offline-first (spec §14): they load pre-staged artifacts from
-the host bind mount `/DATA/docker/mounts/sage/model-artifacts` (mounted
-read-only at `/artifacts` in the embedding/retrieval/ingestion containers)
-and fail startup rather than downloading at runtime (`HF_HUB_OFFLINE=1`,
-`TRANSFORMERS_OFFLINE=1` are set in the stack).
+The shared vLLM project loads the complete `google/embeddinggemma-2`
+checkpoint once from
+`/DATA/docker/mounts/models/google/embeddinggemma-2`, including its
+`chat_template.jinja`. Both DRUID and SAGE use that registry; configure
+`MODEL_DIR` consistently. See [shared-embedding.md](shared-embedding.md).
 
-Stage once before first boot — just copy the checkpoints into the host
-directory:
+SAGE retrieval and ingestion still need their MiniLM reranker/tokenizer
+under `/DATA/docker/mounts/sage/model-artifacts/minilm`, mounted read-only
+at `/artifacts/minilm`. No separate SAGE EmbedGemma copy is needed by the
+default adapter. All model serving remains offline-first, with
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`.
 
 ```bash
-sudo mkdir -p /DATA/docker/mounts/sage/model-artifacts/{embeddinggemma-2,minilm}
-sudo cp -r /path/to/your/models/embeddinggemma-2/* /DATA/docker/mounts/sage/model-artifacts/embeddinggemma-2/
-sudo cp -r /path/to/your/models/minilm/*           /DATA/docker/mounts/sage/model-artifacts/minilm/
+sudo mkdir -p /DATA/docker/mounts/sage/model-artifacts/minilm
+sudo cp -r /path/to/your/models/minilm/* /DATA/docker/mounts/sage/model-artifacts/minilm/
 ```
 
-Expected layout on the host:
-
-```
-/DATA/docker/mounts/sage/model-artifacts/
-  embeddinggemma-2/   # google/embeddinggemma-2 checkpoint, offline loadable
-  minilm/             # MiniLM reranker checkpoint + tokenizer
-```
-
-`MODEL_PATH`, `MINILM_MODEL_PATH`, `MINILM_TOKENIZER_PATH` in `.env` point at
-the in-container paths (`/artifacts/...`, defaults shown above).
+`MINILM_MODEL_PATH` and `MINILM_TOKENIZER_PATH` in `.env` point at the
+in-container path `/artifacts/minilm`. `MODEL_PATH` is only needed when
+explicitly choosing the optional local `st` embedding backend.
 
 ## Host bind-mount directories
 
@@ -85,10 +82,14 @@ sudo chown 10001:10001 /DATA/docker/mounts/sage/rustfs     # rustfs runs as UID 
 ## First-run order
 
 ```bash
-cd ~/workspace/new_sage/build/deploy
+cd /path/to/new_sage/deploy
 
 # 0. secrets + any host-port remapping
 cp .env.example .env && $EDITOR .env
+
+# Shared inference: start ONCE from either repository, before app services.
+docker network inspect embedding-net >/dev/null 2>&1 || docker network create embedding-net
+docker compose --env-file .env -f docker-compose.embedding.yml up -d --wait --wait-timeout 600
 
 # 1. base infrastructure
 docker compose up -d postgres redis rustfs etcd milvus-standalone

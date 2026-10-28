@@ -1,6 +1,7 @@
 # New_sage infrastructure — spec §13.
 #
-# Local-first Context7 alternative: single user, NO auth, CPU-only. The stack
+# Local-first Context7 alternative: single user, NO auth, CPU app services.
+# Embeddings use the shared GPU vLLM project (docker-compose.embedding.yml). The stack
 # is HTTP-only on sage-net; the host firewall / Tailscale is the security
 # boundary (spec §13). Do NOT publish these ports beyond the local network.
 #
@@ -163,16 +164,19 @@ services:
     build:
       context: ..
       dockerfile: services/embedding/Dockerfile
+      args:
+        INSTALL_LOCAL_EMBEDDINGS: ${INSTALL_LOCAL_EMBEDDINGS:-false}
     environment:
-      MODEL_PATH: ${MODEL_PATH:-/artifacts/embeddinggemma-2}
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-vllm}
+      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-google/embeddinggemma-2}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+      EMBEDDING_VLLM_URL: ${EMBEDDING_VLLM_URL:-http://vllm-embedding:8000/v1}
+      EMBEDDING_VLLM_API_KEY: ${EMBEDDING_VLLM_API_KEY:-}
+      EMBEDDING_VLLM_TIMEOUT_S: ${EMBEDDING_VLLM_TIMEOUT_S:-120}
       HF_HUB_OFFLINE: "1"
       TRANSFORMERS_OFFLINE: "1"
-    volumes:
-      # Staged model artifacts, READ-ONLY. Missing models fail startup
-      # (offline-first, spec §14) — see deploy/README.md for staging.
-    - /DATA/docker/mounts/sage/model-artifacts:/artifacts:ro
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8002'"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5)"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -181,6 +185,7 @@ services:
 
     networks:
     - default
+    - embedding-net
   retrieval:
     build:
       context: ..
@@ -402,5 +407,8 @@ services:
     - default
 
 networks:
+  embedding-net:
+    name: embedding-net
+    external: true
   default:
     name: sage-net

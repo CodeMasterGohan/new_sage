@@ -1,14 +1,14 @@
-"""EmbeddingGemma 2 CPU serving logic (spec §8).
+"""EmbeddingGemma 2 API adapter (spec §8).
 
 The §8 prefix contract is owned by the vendored contract module
 (``vendor/ingestion/embeddings.py`` — byte-identical to the verified
 new_DRUID source) and reused here via :mod:`reuse` — never duplicated.
 This module owns: input formatting through the contract's prefix pairs,
-batching, CPU concurrency control, width/normalization guards, and the
+batching, concurrency control, width/normalization guards, and the
 fail-closed backend lifecycle.
 
-CPU ONLY (spec §13): new_sage has no GPU requirement anywhere. This
-service must never request GPU resources.
+By default inference runs on the shared vLLM server. This adapter does
+not request GPU resources; the sentence-transformers backend is opt-in.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import threading
 
 from . import reuse
 from .settings import EmbeddingServiceSettings
+from .vllm_backend import VllmEmbeddingBackend
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ _TASK_TO_CONTRACT_TASK = {
 
 
 class EmbeddingService:
-    """CPU-only EmbeddingGemma 2 service (spec §8)."""
+    """EmbeddingGemma 2 adapter using the shared vLLM server by default."""
 
     def __init__(self, settings: EmbeddingServiceSettings | None = None) -> None:
         self.settings = settings or EmbeddingServiceSettings()
@@ -48,7 +49,17 @@ class EmbeddingService:
         if self.settings.backend == "mock":
             log.warning("embedding backend=mock: deterministic fake vectors, NOT semantic")
             return ing.MockEmbeddingBackend(dimension=self.settings.dimension)
-        # Production: sentence-transformers, CPU, pre-staged artifact only.
+        if self.settings.backend == "vllm":
+            return VllmEmbeddingBackend(
+                model_id=self.settings.model_id,
+                base_url=self.settings.vllm_url,
+                api_key=self.settings.vllm_api_key,
+                timeout_s=self.settings.vllm_timeout_s,
+                dimension=self.settings.dimension,
+                normalize=self.settings.normalize,
+                modality_config=self.settings.modality_config,
+            )
+        # Opt-in local backend: sentence-transformers on CPU, staged artifacts only.
         st_settings = ing.EmbeddingSettings(
             model_id=self.settings.model_id,
             modality_config=self.settings.modality_config,
@@ -107,10 +118,13 @@ class EmbeddingService:
         self._verified = True
 
     def _encode_texts(self, formatted: list[str]) -> list[list[float]]:
-        # sentence-transformers encode is run under a lock: CPU inference is
-        # throughput-bound and the encoder is not guaranteed thread-safe.
-        with self._lock:
+        if self.settings.backend == "vllm":
             vectors = self._backend.embed_texts(formatted)
+        else:
+            # Local encoders are not guaranteed thread-safe. Remote requests
+            # use independent HTTP clients and can share vLLM's batch scheduler.
+            with self._lock:
+                vectors = self._backend.embed_texts(formatted)
         for v in vectors:
             self._verify_vector(v)
         return vectors
@@ -162,5 +176,5 @@ class EmbeddingService:
             "backend": self.settings.backend,
             "model_path": self.settings.model_path or None,
             "model_loaded": self._verified,
-            "device": "cpu",
+            "device": "remote" if self.settings.backend == "vllm" else "cpu",
         }
