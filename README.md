@@ -1,5 +1,7 @@
 # New_sage — Personal Context7 Alternative
 
+For a shared GPU embedding deployment on H200 GPU 0, see [shared EmbeddingGemma 2](deploy/shared-embedding.md).
+
 > Version-pinned documentation for your AI coding agent. Ask about any
 > library's API; get back accurate, cited docs — never hallucinated
 > signatures. **No authentication** (the corpus is public documentation,
